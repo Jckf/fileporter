@@ -47,7 +47,29 @@ See the comment at the top of `web/session.js`.
     cd test && npm install && npx playwright install
     node e2e.test.js chromium firefox webkit
 
-Debug flags: `?verbose` (engine logs), `?derpmap=<url>`.
+Every test runs in a normal and an incognito (private browsing) session;
+`--session=normal` or `--session=incognito` picks one. Firefox's and
+WebKit's private modes refuse the storage a receiver needs: there the
+receiver must show the "unsupported" screen, and the other tests pair a
+private sender with a normal receiver (`INCOGNITO_STORAGE` in
+`test/e2e.test.js`).
+
+Playwright's WebKit needs Ubuntu's libraries. Elsewhere (e.g. Arch), run
+it in Playwright's image, with the dev server running on the host:
+
+    cd test && docker run --rm --network host --ipc host \
+      -v "$PWD":/test -v /test/node_modules -w /test \
+      mcr.microsoft.com/playwright:v1.65.1-noble \
+      sh -c 'npm ci && node e2e.test.js webkit'
+
+WebRTC can't connect inside that container (only mDNS host candidates,
+which nothing there resolves); the suite detects this and checks the
+relay fallback instead of the direct path.
+
+Debug flags: `?verbose` (engine logs), `?derpmap=<url>`. For tests:
+`?sweepgrace=<ms>`, and on the receiver `?quota=<bytes>` (report at most
+this much free storage) and `?writelimit=<bytes>` (fail writes past this
+offset) to simulate a full disk.
 
 tailcat is pinned in `go.mod`; it is pre-1.0, so bump deliberately.
 
