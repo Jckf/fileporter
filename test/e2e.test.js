@@ -40,31 +40,53 @@ const INCOGNITO_STORAGE = { chromium: true, firefox: false, webkit: false };
 const storageWorks = (engine, session) => session === "normal" || INCOGNITO_STORAGE[engine];
 
 /**
- * Whether WebRTC can connect at all in this browser and environment:
- * two peer connections in one page, no fileporter code involved. Not
- * everywhere can (e.g. WebKit in Playwright's Docker image only offers
- * mDNS host candidates, which nothing there resolves); there the direct
- * transfer test checks the relay fallback instead of failing.
+ * Whether WebRTC can connect at all between two browser processes in
+ * this environment, as sender and receiver do in the tests: two
+ * separate browser instances, offer and answer passed between them
+ * here, no fileporter code involved. Not everywhere can: WebKit offers
+ * only mDNS host candidates, which it resolves within one process but
+ * nothing resolves across processes in Playwright's Docker image or on
+ * GitHub's runners. There the direct transfer test checks the relay
+ * fallback instead of failing. (No STUN servers here, unlike the app:
+ * both peers are on one host, and NATs rarely route a host's own
+ * public address back to it, so they wouldn't help.)
  */
 async function rtcLoopbackWorks(engine) {
-  const browser = await engine.launch();
+  const browsers = [await engine.launch(), await engine.launch()];
   try {
-    const page = await (await browser.newContext()).newPage();
-    return await page.evaluate(async () => {
-      const a = new RTCPeerConnection();
-      const b = new RTCPeerConnection();
-      a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
-      b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
-      const dc = a.createDataChannel("probe");
-      const opened = new Promise((res) => { dc.onopen = () => res(true); });
-      await a.setLocalDescription(await a.createOffer());
-      await b.setRemoteDescription(a.localDescription);
-      await b.setLocalDescription(await b.createAnswer());
-      await a.setRemoteDescription(b.localDescription);
-      return Promise.race([opened, new Promise((r) => setTimeout(() => r(false), 10_000))]);
+    const [a, b] = await Promise.all(browsers.map(async (br) => (await br.newContext()).newPage()));
+    // Non-trickle: each side waits for all its candidates (or 5 s), so
+    // its description carries them.
+    const setup = () => {
+      const pc = (window.__pc = new RTCPeerConnection());
+      window.__gathered = () => new Promise((res) => {
+        if (pc.iceGatheringState === "complete") return res();
+        pc.onicegatheringstatechange = () => pc.iceGatheringState === "complete" && res();
+        setTimeout(res, 5000);
+      });
+    };
+    await Promise.all([a.evaluate(setup), b.evaluate(setup)]);
+    const offer = await a.evaluate(async () => {
+      const pc = window.__pc;
+      const dc = pc.createDataChannel("probe");
+      window.__open = new Promise((res) => { dc.onopen = () => res(true); });
+      await pc.setLocalDescription(await pc.createOffer());
+      await window.__gathered();
+      return pc.localDescription.toJSON();
     });
+    const answer = await b.evaluate(async (offer) => {
+      const pc = window.__pc;
+      await pc.setRemoteDescription(offer);
+      await pc.setLocalDescription(await pc.createAnswer());
+      await window.__gathered();
+      return pc.localDescription.toJSON();
+    }, offer);
+    return await a.evaluate(async (answer) => {
+      await window.__pc.setRemoteDescription(answer);
+      return Promise.race([window.__open, new Promise((r) => setTimeout(() => r(false), 10_000))]);
+    }, answer);
   } finally {
-    await browser.close();
+    await Promise.all(browsers.map((br) => br.close()));
   }
 }
 
