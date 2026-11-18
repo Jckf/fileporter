@@ -1,5 +1,11 @@
-# Builds the site (Go → js/wasm engine + static files) and publishes
-# dist/ to GitHub Pages on every push to main.
+# Builds the site (Go → js/wasm engine + static files), runs the e2e
+# suite against that exact build in Chromium, Firefox and WebKit, and
+# only if everything passes publishes it to GitHub Pages. Runs on every
+# push to main that touches more than Markdown.
+#
+# The tests use tailcat's public DERP relays (rate-limited), so a run
+# can occasionally fail for reasons outside this repo; re-run the
+# failed jobs from the Actions page, and the deploy follows.
 #
 # Pages is a static host: no custom response headers and no
 # Content-Encoding negotiation for wasm. The build already ships the
@@ -15,6 +21,8 @@ name: pages
 on:
   push:
     branches: [main]
+    # Markdown isn't part of the site (cmd/build never reads it).
+    paths-ignore: ["**.md"]
   workflow_dispatch:
 
 permissions:
@@ -34,13 +42,76 @@ jobs:
           go-version-file: go.mod
       - name: Build site
         run: go run ./cmd/build -o dist
+      # Built here, where Go is set up and cached, so the test jobs need
+      # no Go toolchain.
+      - name: Build dev server
+        run: go build -o devserver-bin/devserver ./cmd/devserver
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: devserver
+          path: devserver-bin/devserver
+          retention-days: 1
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
 
-  deploy:
+  test:
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Let every job finish, so one run shows all failures; the deploy
+      # waits for all of them either way.
+      fail-fast: false
+      # One job per browser and session: the tests are mostly waiting on
+      # the network, so splitting them is what shortens the run.
+      matrix:
+        browser: [chromium, firefox, webkit]
+        session: [normal, incognito]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: test
+      # The site exactly as build uploaded it for Pages, and the dev
+      # server binary, into $RUNNER_TEMP/artifacts/<name>/.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/artifacts
+      - name: Start dev server
+        run: |
+          mkdir dist && tar -xf "$RUNNER_TEMP/artifacts/github-pages/artifact.tar" -C dist
+          server="$RUNNER_TEMP/artifacts/devserver/devserver"
+          chmod +x "$server"
+          "$server" -dir dist &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:8080/ && exit 0; sleep 1; done
+          echo "dev server didn't start" >&2; exit 1
+      # The runner's preinstalled Node runs Playwright fine; its only
+      # dependency is playwright itself, so npm ci is quick uncached.
+      - name: Install test dependencies
+        working-directory: test
+        run: npm ci --no-audit --no-fund
+      # Browsers are cached per lockfile (that is, per Playwright
+      # version); the system packages they need are installed each time.
+      - id: browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ hashFiles('test/package-lock.json') }}
+      - name: Install browser
+        working-directory: test
+        run: |
+          if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then
+            npx playwright install-deps ${{ matrix.browser }}
+          else
+            npx playwright install --with-deps ${{ matrix.browser }}
+          fi
+      - name: Run e2e tests
+        working-directory: test
+        run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
+
+  deploy:
+    needs: [build, test]
     runs-on: ubuntu-latest
     permissions:
       pages: write
