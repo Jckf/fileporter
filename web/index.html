@@ -19,6 +19,11 @@
   <meta name="theme-color" content="#0e1114" media="(prefers-color-scheme: dark)">
   <title>fileporter</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <!-- Installable app (PWA). No service worker: the app needs the
+       network anyway, and a cache would fight the versioned deploys. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="fileporter">
   <script src="boot.js"></script>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.js"></script>

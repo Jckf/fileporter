@@ -3,8 +3,15 @@
 
 // Command build produces the static site in dist/:
 //
-//   - index.html, boot.js, favicon.svg and THIRD_PARTY_LICENSES.txt at
-//     the root.
+//   - index.html, boot.js, favicon.svg, manifest.webmanifest, icons/
+//     and THIRD_PARTY_LICENSES.txt at the root. The web app manifest
+//     stays put so its start_url ("./", relative to the manifest) is
+//     the site root, and the installed app's identity (derived from
+//     start_url) never changes. icons/*.png are rendered from the
+//     SVGs next to them and committed, e.g.
+//     rsvg-convert -w 512 -h 512 icon.svg -o icon-512.png
+//     (icon-192 and icon-512 from icon.svg; icon-maskable-512 and the
+//     180 px apple-touch-icon from icon-maskable.svg).
 //   - v/<hash>/: every other page asset (JS modules, workers, CSS,
 //     wasm_exec.js, vendored libraries, engine-manifest.json). <hash>
 //     covers all of them, and index.html is rewritten to point into
@@ -133,8 +140,9 @@ func run(out string) error {
 		if err != nil {
 			return err
 		}
-		switch rel {
-		case "index.html", "boot.js", "favicon.svg":
+		switch {
+		case rel == "index.html", rel == "boot.js", rel == "favicon.svg", rel == "manifest.webmanifest",
+			strings.HasPrefix(rel, "icons/"):
 			rootFiles[rel] = b
 		default:
 			assets[rel] = b
@@ -177,7 +185,11 @@ func run(out string) error {
 	}
 	rootFiles["index.html"] = []byte(html)
 	for n, b := range rootFiles {
-		if err := os.WriteFile(filepath.Join(out, n), b, 0o644); err != nil {
+		dst := filepath.Join(out, filepath.FromSlash(n))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, b, 0o644); err != nil {
 			return err
 		}
 	}

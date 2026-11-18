@@ -31,6 +31,10 @@ Done (P0–P2):
   deleted on cancel or confirmed save; abandoned transfers are swept
   once no tab holds their Web Lock and they have been inactive for 30 min.
 
+- Installable as an app (PWA): web app manifest and icons at the site
+  root. Deliberately no service worker: the app needs the network
+  anyway, and a cache would fight the versioned deploys.
+
 Next: own DERP/STUN infrastructure (P3; currently tailcat's free,
 rate-limited public relays), hardening (CSP review, real Safari/iOS
 testing).

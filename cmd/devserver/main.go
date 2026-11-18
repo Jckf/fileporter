@@ -14,11 +14,14 @@ package main
 import (
 	"flag"
 	"log"
+	"mime"
 	"net/http"
 	"strings"
 )
 
 func main() {
+	// As GitHub Pages serves it; Go doesn't know the extension.
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
 	addr := flag.String("addr", "localhost:8080", "listen address")
 	dir := flag.String("dir", "dist", "directory to serve")
 	flag.Parse()

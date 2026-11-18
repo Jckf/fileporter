@@ -422,6 +422,46 @@ tests["nospace-midway"] = async (p) => {
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
 };
 
+tests["pwa"] = async (p) => {
+  // What browsers need to offer installing the site as an app: a linked
+  // manifest with name, start_url, display and 192/512 px icons (plus a
+  // maskable one for Android, and an Apple touch icon for iOS).
+  const page = p.sender;
+  await page.goto(BASE);
+  const r = await page.evaluate(async () => {
+    const href = document.querySelector('link[rel="manifest"]')?.href;
+    if (!href) return { error: "no manifest link" };
+    const resp = await fetch(href);
+    const m = await resp.json();
+    const load = (src) => new Promise((res) => {
+      const img = new Image();
+      img.onload = () => res(`${img.naturalWidth}x${img.naturalHeight}`);
+      img.onerror = () => res("failed");
+      img.src = src;
+    });
+    const icons = [];
+    for (const i of m.icons || []) icons.push({ ...i, got: await load(new URL(i.src, href).href) });
+    const apple = document.querySelector('link[rel="apple-touch-icon"]')?.href;
+    return {
+      m, icons,
+      startURL: new URL(m.start_url, href).href,
+      apple: apple ? await load(apple) : "missing",
+    };
+  });
+  if (r.error) throw new Error(r.error);
+  const { m, icons } = r;
+  if (!m.name || !m.short_name) throw new Error("manifest needs name and short_name");
+  if (m.display !== "standalone") throw new Error(`display ${m.display}`);
+  if (r.startURL !== new URL(BASE).href) throw new Error(`start_url resolves to ${r.startURL}, not the site root`);
+  for (const i of icons) if (i.got !== i.sizes) throw new Error(`icon ${i.src}: ${i.got}, declared ${i.sizes}`);
+  const has = (size, purpose) => icons.some((i) => i.sizes === size && (i.purpose || "any").split(" ").includes(purpose));
+  if (!has("192x192", "any") || !has("512x512", "any")) throw new Error("needs 192 and 512 px icons");
+  if (!has("512x512", "maskable")) throw new Error("needs a maskable icon");
+  if (r.apple !== "180x180") throw new Error(`apple-touch-icon: ${r.apple}`);
+  return `${icons.length} icons`;
+};
+tests["pwa"].always = true;
+
 // Tests that run with a private receiver even where private mode has no
 // storage: they check that case, or don't receive at all.
 tests["stale-index"].always = true;
