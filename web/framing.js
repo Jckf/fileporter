@@ -26,6 +26,7 @@ export class FramedConn {
     this.avail = 0;
     this.eof = false;
     this.writeChain = Promise.resolve();
+    this.onBytes = null; // called whenever bytes arrive (liveness)
   }
 
   /**
@@ -59,6 +60,7 @@ export class FramedConn {
       if (this.eof) return false;
       const chunk = await this.conn.read();
       if (chunk === null) { this.eof = true; return false; }
+      this.onBytes?.();
       this.pieces.push(chunk);
       this.avail += chunk.length;
     }

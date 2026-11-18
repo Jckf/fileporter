@@ -32,6 +32,10 @@ let guardLeave = false;
 window.addEventListener("beforeunload", (e) => {
   if (guardLeave) { e.preventDefault(); e.returnValue = ""; }
 });
+// Leaving (or reloading): tell the peer, so it can reconnect right away
+// instead of waiting for the keepalive timeout. Best effort, see bye()
+// in transport.js. (Not from beforeunload: the user may still cancel.)
+window.addEventListener("pagehide", () => { currentCtl?.bye?.(); recvCtl?.bye?.(); });
 
 // The fragment is the only session state, so a different fragment
 // means a different session: start over cleanly.
@@ -295,6 +299,10 @@ function senderResume(state) {
 let recvCtl = null;
 let recvStopped = false;
 
+// A fresh dial per attempt: each one sets up a new tunnel client, a
+// clean slate if the sender's side changed (reloaded page).
+const DIAL_TIMEOUT_MS = 20000;
+
 async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
   show("recv-active");
@@ -305,9 +313,13 @@ async function receiverLoop(state) {
   await engine.ready;
   const iceServers = state.rm === "performance" && state.sm === "performance" ? await rtc.stunServers(config.derpMapURL) : [];
 
+  // attempt counts failures since the last session that got going. A
+  // session that drops is redialed at once (the usual cause is the
+  // sender reloading, and it's back within seconds); failed dials back
+  // off, but briefly, so we notice soon once the sender returns.
   for (let attempt = 0; !recvStopped; attempt++) {
     if (attempt) {
-      const wait = Math.min(30, 2 ** Math.min(attempt, 5));
+      const wait = Math.min(5, attempt);
       for (let s = wait; s > 0 && !recvStopped; s--) {
         setText("recv-active-status", `Connection lost. Retrying in ${s} s… (the sender's page must stay open)`);
         await sleep(1000);
@@ -317,7 +329,7 @@ async function receiverLoop(state) {
     setText("recv-active-status", "Connecting…");
     let conn;
     try {
-      conn = await engine.dial({ addr: state.a, derpMapURL: config.derpMapURL, clientKey: state.k, verbose: config.verbose });
+      conn = await engine.dial({ addr: state.a, derpMapURL: config.derpMapURL, clientKey: state.k, timeoutMs: DIAL_TIMEOUT_MS, verbose: config.verbose });
     } catch (err) {
       console.info("dial failed:", err.message);
       continue;
@@ -331,6 +343,7 @@ async function receiverLoop(state) {
         onProgress: (b) => progress?.(b),
         onStatus: (s) => {
           if (s.phase === "hello") {
+            attempt = -1; // got going: redial at once if this drops
             setText("recv-active-file", s.hello.name);
             $("recv-active-file").title = s.hello.name;
             setText("recv-active-size", fmtBytes(s.hello.size));
@@ -371,7 +384,6 @@ async function receiverLoop(state) {
       }
       console.info("session dropped:", err.message);
       $("recv-transfer").dataset.phase = "waiting";
-      attempt = Math.min(attempt, 1); // made progress: retry soon
     }
   }
 }

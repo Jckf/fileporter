@@ -3,13 +3,23 @@
 
 // Command build produces the static site in dist/:
 //
-//   - engine.<hash>.wasm.gz: the js/wasm engine, gzipped. Static hosts
-//     can't be relied on to negotiate Content-Encoding for wasm, so the
-//     page fetches the .gz raw and decompresses it with
-//     DecompressionStream (all major engines support it).
-//   - engine-manifest.json: {url, integrity, size} for the page, so it
-//     can fetch the content-hashed engine with Subresource Integrity.
-//   - wasm_exec.js from the Go toolchain, and everything in web/.
+//   - index.html, boot.js, favicon.svg and THIRD_PARTY_LICENSES.txt at
+//     the root.
+//   - v/<hash>/: every other page asset (JS modules, workers, CSS,
+//     wasm_exec.js, vendored libraries, engine-manifest.json). <hash>
+//     covers all of them, and index.html is rewritten to point into
+//     the directory. Static hosts like GitHub Pages cache everything
+//     for a while (max-age=600) and can't be told otherwise, so
+//     unversioned asset URLs could mix a new index.html with old
+//     cached modules, or the reverse. Versioned URLs never change
+//     content, so a page only ever loads the assets it was built with.
+//     Only the current version is published; boot.js recovers a
+//     browser whose cached index.html points at a removed version.
+//   - engine.<hash>.wasm.gz: the js/wasm engine, gzipped and named by
+//     content, shared across versions. Static hosts can't be relied on
+//     to negotiate Content-Encoding for wasm, so the page fetches the
+//     .gz raw and decompresses it with DecompressionStream.
+//     engine-manifest.json holds its URL, size and SHA-384.
 //   - THIRD_PARTY_LICENSES.txt: the license of every module compiled
 //     into the engine, plus Go's. Serving the engine to browsers is
 //     binary distribution, which BSD/MIT/ISC/Apache all require to be
@@ -87,44 +97,93 @@ func run(out string) error {
 	}
 	sri := sha512.Sum384(gz.Bytes())
 	manifest, _ := json.MarshalIndent(map[string]any{
-		"url":       name,
+		// Relative to the manifest, which lives in v/<hash>/.
+		"url":       "../../" + name,
 		"integrity": "sha384-" + base64.StdEncoding.EncodeToString(sri[:]),
 		"size":      gz.Len(),
 		"rawSize":   len(wasm),
 	}, "", "  ")
-	if err := os.WriteFile(filepath.Join(out, "engine-manifest.json"), manifest, 0o644); err != nil {
-		return err
-	}
 
-	// wasm_exec.js from the toolchain that built the engine.
 	goroot, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {
 		return fmt.Errorf("go env GOROOT: %w", err)
 	}
-	if err := copyFile(filepath.Join(strings.TrimSpace(string(goroot)), "lib", "wasm", "wasm_exec.js"), filepath.Join(out, "wasm_exec.js")); err != nil {
+	gorootDir := strings.TrimSpace(string(goroot))
+	if err := writeThirdPartyLicenses(filepath.Join(out, "THIRD_PARTY_LICENSES.txt"), gorootDir); err != nil {
 		return err
 	}
 
-	if err := writeThirdPartyLicenses(filepath.Join(out, "THIRD_PARTY_LICENSES.txt"), strings.TrimSpace(string(goroot))); err != nil {
+	// Collect the versioned assets: web/ (minus the root files),
+	// wasm_exec.js from the toolchain that built the engine, and the
+	// manifest.
+	assets := map[string][]byte{"engine-manifest.json": manifest}
+	wasmExec, err := os.ReadFile(filepath.Join(gorootDir, "lib", "wasm", "wasm_exec.js"))
+	if err != nil {
 		return err
 	}
-
-	// Static web files, including subdirectories (vendor/).
+	assets["wasm_exec.js"] = wasmExec
+	rootFiles := map[string][]byte{}
 	err = filepath.WalkDir("web", func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+		if err != nil || d.IsDir() {
 			return err
 		}
 		rel, _ := filepath.Rel("web", path)
-		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(out, rel), 0o755)
+		rel = filepath.ToSlash(rel)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
-		return copyFile(path, filepath.Join(out, rel))
+		switch rel {
+		case "index.html", "boot.js", "favicon.svg":
+			rootFiles[rel] = b
+		default:
+			assets[rel] = b
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
-	log.Printf("built %s: engine %s (%.1f MB raw, %.1f MB gz)", out, name,
-		float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20))
+	names := make([]string, 0, len(assets))
+	for n := range assets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, n := range names {
+		fmt.Fprintf(h, "%s\x00%d\x00", n, len(assets[n]))
+		h.Write(assets[n])
+	}
+	version := hex.EncodeToString(h.Sum(nil)[:6])
+	vdir := filepath.Join(out, "v", version)
+	for _, n := range names {
+		dst := filepath.Join(vdir, filepath.FromSlash(n))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, assets[n], 0o644); err != nil {
+			return err
+		}
+	}
+
+	// Point index.html into the version directory.
+	html := string(rootFiles["index.html"])
+	for _, ref := range []string{`href="style.css"`, `src="app.js"`} {
+		if strings.Count(html, ref) != 1 {
+			return fmt.Errorf("index.html: expected exactly one %s", ref)
+		}
+		attr, file, _ := strings.Cut(ref, `="`)
+		html = strings.Replace(html, ref, attr+`="v/`+version+"/"+file, 1)
+	}
+	rootFiles["index.html"] = []byte(html)
+	for n, b := range rootFiles {
+		if err := os.WriteFile(filepath.Join(out, n), b, 0o644); err != nil {
+			return err
+		}
+	}
+
+	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz)",
+		out, version, name, float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20))
 	return nil
 }
 

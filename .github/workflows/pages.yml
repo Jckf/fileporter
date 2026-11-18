@@ -5,6 +5,10 @@
 # Content-Encoding negotiation for wasm. The build already ships the
 # engine pre-gzipped (engine.<hash>.wasm.gz, decompressed in the
 # worker) and the page carries its CSP in a <meta> tag.
+#
+# Pages caches everything for 10 minutes, so assets live in a versioned
+# directory (v/<hash>/, see cmd/build); web/boot.js recovers browsers
+# whose cached index.html points at the previous version.
 
 name: pages
 

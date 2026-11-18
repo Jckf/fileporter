@@ -15,7 +15,7 @@
 //	tsListen({derpMapURL, senderKey, allowClient,
 //	          onConnection, verbose})                → Promise<Listener>
 //	tsDial({addr, derpMapURL, clientKey, port,
-//	        verbose})                                → Promise<Conn>
+//	        timeoutMs, verbose})                     → Promise<Conn>
 //
 // Unlike the upstream web demo, keys are never generated implicitly
 // by tsListen/tsDial: the page creates all session keys up front with
@@ -196,6 +196,10 @@ func tsDial(this js.Value, args []js.Value) any {
 	if p := opts.Get("port"); p.Type() == js.TypeNumber {
 		port = uint16(p.Int())
 	}
+	timeout := 60 * time.Second
+	if t := opts.Get("timeoutMs"); t.Type() == js.TypeNumber && t.Int() > 0 {
+		timeout = time.Duration(t.Int()) * time.Millisecond
+	}
 	return makePromise(func() (any, error) {
 		if addr == "" || clientKey == "" {
 			return nil, errors.New("addr and clientKey are required")
@@ -210,7 +214,7 @@ func tsDial(this js.Value, args []js.Value) any {
 			Logf:       logf,
 			DERPMapURL: derpMapURL,
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		if err := pingUntil(ctx, cl); err != nil {
 			cl.Close()

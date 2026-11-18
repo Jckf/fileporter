@@ -15,8 +15,15 @@
 // Liveness: a peer that vanishes (closed tab, lost network) sends no
 // TCP reset through the tunnel, so reads would block forever. Both
 // transports send {t:"ping"} every KEEPALIVE_MS and close themselves
-// after PEER_TIMEOUT_MS without receiving anything. Pings never reach
-// consumers.
+// after PEER_TIMEOUT_MS without receiving anything. Any received byte
+// counts, not just whole messages: a 1 MiB chunk on a slow relay can
+// take longer than the timeout, and pings queue behind chunks.
+// A page that is going away sends {t:"bye"} (bye()), so the peer can
+// reconnect at once instead of waiting for the timeout. Best effort:
+// on the relay it queues behind data already in the TCP send buffer,
+// so mid-transfer it rarely gets out before the page is torn down; it
+// helps when the link is idle. (A direct connection's close is seen
+// immediately anyway.) Pings and byes never reach consumers.
 //
 // Link runs over the framed tailcat stream (always present: handshake,
 // WebRTC signaling, and the data path in privacy mode or when no direct
@@ -24,8 +31,8 @@
 
 import { FramedConn, T_CONTROL, T_DATA } from "./framing.js";
 
-const KEEPALIVE_MS = 5000;
-const PEER_TIMEOUT_MS = 20000;
+const KEEPALIVE_MS = 3000;
+const PEER_TIMEOUT_MS = 12000;
 const FINISH_TIMEOUT_MS = 3000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -52,6 +59,7 @@ class EventQueue {
   push(item) {
     this.lastRx = Date.now();
     if (item.kind === "control" && item.msg.t === "ping") return;
+    if (item.kind === "control" && item.msg.t === "bye") { this.close(new Error("peer left")); this.shutdown(); return; }
     if (this.signalingHandler && isSignaling(item)) { this.signalingHandler(item.msg); return; }
     const i = this.waiters.findIndex((w) => w.match(item));
     if (i >= 0) { this.waiters.splice(i, 1)[0].resolve(item); return; }
@@ -86,6 +94,7 @@ export class Link extends EventQueue {
     this.via = "relay";
     this.conn = conn;
     this.fc = new FramedConn(conn);
+    this.fc.onBytes = () => { this.lastRx = Date.now(); };
     this.done = this.readLoop();
     this.startLiveness(() => this.fc.send({ t: "ping" }).catch(() => {}));
   }
@@ -110,6 +119,7 @@ export class Link extends EventQueue {
     }
   }
   send(msg) { return this.fc.send(msg); }
+  bye() { if (!this.err) this.fc.send({ t: "bye" }).catch(() => {}); }
   sendChunk(idx, bytes) {
     if (this.err) return Promise.reject(this.err);
     return this.fc.sendChunk(idx, bytes);
@@ -167,6 +177,7 @@ export class RtcTransport extends EventQueue {
     this.shutdown();
   }
   onData(d) {
+    this.lastRx = Date.now();
     try {
       if (typeof d === "string") { this.push({ kind: "control", msg: JSON.parse(d) }); return; }
       const dv = new DataView(d);
@@ -194,6 +205,7 @@ export class RtcTransport extends EventQueue {
     this.dc.send(JSON.stringify(msg));
     return Promise.resolve();
   }
+  bye() { if (!this.err) try { this.dc.send('{"t":"bye"}'); } catch {} }
   async sendChunk(idx, bytes) {
     for (let off = 0; off < bytes.length; off += PIECE) {
       if (this.err) throw this.err;

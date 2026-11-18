@@ -229,6 +229,31 @@ tests["cancel-by-receiver"] = async (p) => {
   await assertCleanedUp(p);
 };
 
+tests["stale-index"] = async (p) => {
+  // A browser that cached index.html from before a deploy asks for a
+  // version directory that no longer exists. boot.js must refetch the
+  // page past the cache and reload, keeping the fragment.
+  const s = p.sender;
+  let served = 0;
+  await s.route((url) => url.pathname === new URL(BASE).pathname, async (route) => {
+    const resp = await route.fetch();
+    let body = await resp.text();
+    if (served++ === 0) body = body.replace(/v\/[0-9a-f]{12}\//g, "v/000000000000/");
+    await route.fulfill({ response: resp, body });
+  });
+  await s.goto(BASE + "#R-not-a-real-link");
+  await s.locator("#bad-link").waitFor({ timeout: 30_000 });
+  if (served < 2) throw new Error(`page was fetched ${served} time(s), expected a refetch`);
+  if (!s.url().endsWith("#R-not-a-real-link")) throw new Error(`fragment lost: ${s.url()}`);
+
+  // If even the fresh page fails, show a message instead of looping.
+  await s.unroute("**");
+  await s.route("**/v/*/app.js", (route) => route.fulfill({ status: 404, body: "" }));
+  await s.goto(BASE + "?x=1");
+  await s.locator('[role="alert"]', { hasText: "couldn't load" }).waitFor({ timeout: 30_000 });
+  await s.unroute("**");
+};
+
 tests["sweep"] = async (p) => {
   const { file } = mkFile(24 * MiB);
   const link = await p.startSender(file, "privacy");

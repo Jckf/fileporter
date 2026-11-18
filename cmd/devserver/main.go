@@ -3,8 +3,9 @@
 
 // Command devserver serves dist/ for local development.
 //
-// Content-hashed engine files get immutable caching, everything else
-// is served with no-cache so edits show up on reload. It sets the
+// Versioned assets (v/<hash>/) and content-hashed engine files get
+// immutable caching, everything else is served with no-cache so edits
+// show up on reload (a rebuild changes the version). It sets the
 // same security headers production should.
 //
 // Usage: go run ./cmd/devserver [-addr localhost:8080] [-dir dist]
@@ -25,7 +26,9 @@ func main() {
 	fs := http.FileServer(http.Dir(*dir))
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
-		if strings.HasPrefix(r.URL.Path, "/engine.") && strings.HasSuffix(r.URL.Path, ".wasm.gz") {
+		if strings.HasPrefix(r.URL.Path, "/v/") {
+			hd.Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasPrefix(r.URL.Path, "/engine.") && strings.HasSuffix(r.URL.Path, ".wasm.gz") {
 			hd.Set("Cache-Control", "public, max-age=31536000, immutable")
 			// Served raw; the page decompresses it itself.
 			hd.Set("Content-Type", "application/gzip")

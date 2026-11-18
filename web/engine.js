@@ -5,7 +5,9 @@
 // the engine download immediately in the background; nothing else on
 // the page depends on it until a session starts.
 
-const worker = new Worker("engine-worker.js");
+// Resolved against this module, not the page: the build puts all
+// assets in a versioned directory (see cmd/build).
+const worker = new Worker(new URL("engine-worker.js", import.meta.url));
 const pending = new Map();
 const incomingHandlers = new Map(); // listenerId → (Conn) => void
 const progressHandlers = new Set();
@@ -54,7 +56,7 @@ function rpc(msg, transfer) {
 }
 
 // Start the download as soon as the module is evaluated.
-worker.postMessage({ op: "load", manifestURL: "engine-manifest.json" });
+worker.postMessage({ op: "load", manifestURL: new URL("engine-manifest.json", import.meta.url).href });
 
 /** A tunneled TCP stream living in the worker. Same shape as tailcat's JS conn. */
 export class Conn {

@@ -10,7 +10,7 @@ let nextId = 1;
 
 function getWorker() {
   if (!worker) {
-    worker = new Worker("storage-worker.js");
+    worker = new Worker(new URL("storage-worker.js", import.meta.url));
     worker.onmessage = ({ data: m }) => {
       const p = pending.get(m.id);
       pending.delete(m.id);
@@ -25,6 +25,11 @@ function getWorker() {
   }
   return worker;
 }
+
+// Started right away, not on first use: assets are versioned and a
+// deploy removes the old version, so a tab that stays open across a
+// deploy must not fetch any of its files later.
+getWorker();
 
 function call(op, args, transfer) {
   const id = nextId++;

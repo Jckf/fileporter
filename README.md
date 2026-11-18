@@ -21,10 +21,12 @@ Done (P0–P2):
   privacy is enforced locally (WebRTC constructors locked out).
 - Chunked transfer (1 MiB, per-chunk SHA-256, root hash check, 8-chunk
   ack window) over the relay or a WebRTC data channel.
-- Resume: receiver redials with backoff; receiver reload continues from
-  what is in OPFS; sender reload continues after re-picking the file
-  (checked by fingerprint and the last chunk's hash). Keepalive pings
-  detect a vanished peer within 20 s.
+- Resume: receiver redials (at once after a dropped session, then with
+  a short backoff); receiver reload continues from what is in OPFS;
+  sender reload continues after re-picking the file (checked by
+  fingerprint and the last chunk's hash). A closed direct connection is
+  noticed at once; over the relay, keepalive pings detect a vanished
+  peer within 12 s.
 - Receiver storage in OPFS via sync access handles in a worker. Cleanup:
   deleted on cancel or confirmed save; abandoned transfers are swept
   once no tab holds their Web Lock and they have been inactive for 30 min.
@@ -53,6 +55,14 @@ tailcat is pinned in `go.mod`; it is pre-1.0, so bump deliberately.
 
 Pushing to `main` runs `.github/workflows/pages.yml`, which builds the
 site and publishes it to GitHub Pages: https://fileporter.app/
+
+Pages caches every file for 10 minutes, so all assets except
+`index.html` and `boot.js` live in a content-versioned directory
+(`v/<hash>/`, see `cmd/build`); a page always loads the assets it was
+built with. Only the current version is published: if a cached
+`index.html` points at a removed version, `web/boot.js` refetches the
+page past the cache and reloads once. Open tabs load everything at
+startup, so they keep working across a deploy.
 
 ## License
 

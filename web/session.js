@@ -74,6 +74,8 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
   let transport = link;
   // ctl lets the page stop this session, or cancel it (telling the peer).
   ctl.stop = () => { transport.shutdown(); link.shutdown(); };
+  // Best effort, from pagehide: tell the peer we're leaving.
+  ctl.bye = () => { if (transport !== link) transport.bye(); link.bye(); };
   ctl.cancel = async () => {
     try { await transport.send({ t: "cancel" }); } catch {}
     await end();
@@ -189,6 +191,8 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
   let transport = link;
   // ctl lets the page stop this session, or cancel it (telling the peer).
   ctl.stop = () => { transport.shutdown(); link.shutdown(); };
+  // Best effort, from pagehide: tell the peer we're leaving.
+  ctl.bye = () => { if (transport !== link) transport.bye(); link.bye(); };
   ctl.cancel = async () => {
     try { await transport.send({ t: "cancel" }); } catch {}
     await end();

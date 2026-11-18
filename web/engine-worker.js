@@ -28,12 +28,12 @@ const post = (msg, transfer) => self.postMessage(msg, transfer || []);
 
 // --- Loading -------------------------------------------------------------
 
-async function fetchVerified(manifest) {
+async function fetchVerified(manifest, base) {
   // fetch() with an `integrity` option only resolves after the whole
   // body is downloaded, which defeats the progress bar. So we stream
   // the body ourselves, then check SHA-384 against the manifest before
   // touching the bytes.
-  const resp = await fetch(manifest.url, { cache: "default" });
+  const resp = await fetch(new URL(manifest.url, base), { cache: "default" });
   if (!resp.ok) throw new Error(`fetching ${manifest.url}: HTTP ${resp.status}`);
   const total = manifest.size || Number(resp.headers.get("Content-Length")) || 0;
   const reader = resp.body.getReader();
@@ -60,11 +60,13 @@ async function fetchVerified(manifest) {
 }
 
 async function load(manifestURL) {
-  const manifest = await (await fetch(manifestURL, { cache: "no-cache" })).json();
+  const mresp = await fetch(manifestURL, { cache: "no-cache" });
+  if (!mresp.ok) throw new Error(`fetching engine manifest: HTTP ${mresp.status}`);
+  const manifest = await mresp.json();
   let bytes;
   for (let attempt = 1; ; attempt++) {
     try {
-      bytes = await fetchVerified(manifest);
+      bytes = await fetchVerified(manifest, mresp.url); // manifest.url is relative to the manifest
       break;
     } catch (err) {
       if (attempt >= 5) throw err;
