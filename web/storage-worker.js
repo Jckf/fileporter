@@ -100,6 +100,32 @@ function requireOpen(id) {
 }
 
 const ops = {
+  /**
+   * Whether OPFS is actually usable here, not just present: private
+   * windows may expose the API but throw on use (WebKit, for one, throws
+   * UnknownError). Opens
+   * a sync access handle on a uniquely named file (so concurrent tabs
+   * don't contend for the same exclusive handle) and removes it.
+   */
+  async probe() {
+    let dir = null;
+    const name = `.probe-${crypto.randomUUID()}`;
+    try {
+      dir = await rootDir();
+      const fh = await dir.getFileHandle(name, { create: true });
+      const h = await fh.createSyncAccessHandle();
+      await h.write(new Uint8Array(1), { at: 0 });
+      await h.flush();
+      await h.close();
+      return true;
+    } catch (err) {
+      console.warn(`storage probe failed: ${err?.name}: ${err?.message}`);
+      return false;
+    } finally {
+      if (dir) try { await dir.removeEntry(name); } catch {}
+    }
+  },
+
   /** Probe without creating: {exists, meta|null}. */
   async peek({ id }) {
     try {

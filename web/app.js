@@ -86,7 +86,7 @@ function describeEffective(effective, mine, peer) {
 }
 
 async function startSweeping(keep) {
-  if (!storage.supported()) return;
+  if (!(await storage.supported())) return;
   const run = () => storage.sweep(keep, config.sweepGraceMs).catch((err) => console.warn("sweep failed", err));
   await run();
   setInterval(run, 5 * 60 * 1000);
@@ -452,7 +452,7 @@ async function clearReceived(state, message) {
 }
 
 async function receiver(state) {
-  if (!storage.supported()) { show("unsupported"); return; }
+  if (!(await storage.supported())) { show("unsupported"); return; }
   if (!(await storage.lock(state.id))) { show("busy"); return; }
   startSweeping(state.id);
 

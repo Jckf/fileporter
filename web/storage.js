@@ -39,8 +39,23 @@ function call(op, args, transfer) {
   });
 }
 
-export const supported = () =>
+const apisPresent = () =>
   !!(navigator.storage && navigator.storage.getDirectory && navigator.locks && globalThis.FileSystemFileHandle);
+
+let supportedP = null;
+
+/**
+ * Resolves true if receiving can work here. Beyond checking that the
+ * APIs exist, it uses OPFS for real (in the worker, where receiving
+ * happens): private windows can expose the API yet refuse to use it.
+ * Memoized.
+ */
+export function supported() {
+  if (!supportedP) {
+    supportedP = apisPresent() ? call("probe", {}).catch(() => false) : Promise.resolve(false);
+  }
+  return supportedP;
+}
 
 export const peek = (id) => call("peek", { id });
 export const open = (id, info) => call("open", { id, info });
