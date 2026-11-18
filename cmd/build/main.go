@@ -109,18 +109,19 @@ func run(out string) error {
 		return err
 	}
 
-	// Static web files.
-	entries, err := os.ReadDir("web")
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if err := copyFile(filepath.Join("web", e.Name()), filepath.Join(out, e.Name())); err != nil {
+	// Static web files, including subdirectories (vendor/).
+	err = filepath.WalkDir("web", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
 			return err
 		}
+		rel, _ := filepath.Rel("web", path)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(out, rel), 0o755)
+		}
+		return copyFile(path, filepath.Join(out, rel))
+	})
+	if err != nil {
+		return err
 	}
 	log.Printf("built %s: engine %s (%.1f MB raw, %.1f MB gz)", out, name,
 		float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20))
@@ -177,8 +178,8 @@ func writeThirdPartyLicenses(dst, goroot string) error {
 	sort.Strings(paths)
 
 	var b strings.Builder
-	b.WriteString("Third-party software in the fileporter engine (engine.*.wasm.gz)\n")
-	b.WriteString("and wasm_exec.js, with their licenses.\n\n")
+	b.WriteString("Third-party software shipped by fileporter: the engine (engine.*.wasm.gz),\n")
+	b.WriteString("wasm_exec.js and vendored browser libraries, with their licenses.\n\n")
 	section := func(title string, files ...string) error {
 		b.WriteString(strings.Repeat("=", 78) + "\n" + title + "\n" + strings.Repeat("=", 78) + "\n")
 		for _, f := range files {
@@ -195,6 +196,14 @@ func writeThirdPartyLicenses(dst, goroot string) error {
 	}
 	if err := section("Go (runtime, standard library, wasm_exec.js)", filepath.Join(goroot, "LICENSE")); err != nil {
 		return err
+	}
+	// Vendored browser libraries: each ships with a <file>.LICENSE.
+	vendored, _ := filepath.Glob(filepath.Join("web", "vendor", "*.LICENSE"))
+	sort.Strings(vendored)
+	for _, f := range vendored {
+		if err := section("web/vendor/"+strings.TrimSuffix(filepath.Base(f), ".LICENSE"), f); err != nil {
+			return err
+		}
 	}
 	for _, p := range paths {
 		m := mods[p]

@@ -12,13 +12,17 @@ import * as frag from "./fragment.js";
 import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
 import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
+import * as ui from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {
   for (const s of document.querySelectorAll("main > section")) s.hidden = s.id !== id;
+  window.scrollTo(0, 0);
 };
 const setText = (id, t) => { $(id).textContent = t; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+ui.renderSteps();
 
 // --- Leaving the page --------------------------------------------------------
 
@@ -40,28 +44,27 @@ const readyCallbacks = new Set();
 engine.onProgress((s) => {
   const bar = $("engine-progress");
   const label = $("engine-label");
+  const status = $("engine-status");
   switch (s.state) {
     case "loading":
-      bar.hidden = false;
       if (s.total) bar.value = s.loaded / s.total;
-      label.textContent = s.total
-        ? `Preparing secure engine… ${Math.floor((100 * s.loaded) / s.total)}%`
-        : "Preparing secure engine…";
+      label.textContent = !s.total
+        ? "Preparing secure connection…"
+        : s.loaded >= s.total
+          ? "Almost ready…"
+          : `Preparing secure connection… ${Math.floor((100 * s.loaded) / s.total)}%`;
       break;
     case "retrying":
-      label.textContent = `Engine download failed, retrying (${s.attempt})…`;
+      label.textContent = `Download failed, retrying (${s.attempt})…`;
       break;
     case "ready":
-      bar.hidden = true;
-      label.textContent = "Secure engine ready";
-      $("engine-status").dataset.state = "ready";
+      status.dataset.state = "ready";
       engineReady = true;
       readyCallbacks.forEach((fn) => fn());
       break;
     case "error":
-      bar.hidden = true;
-      label.textContent = `Engine failed to load: ${s.error}. Reload to try again.`;
-      $("engine-status").dataset.state = "error";
+      status.dataset.state = "error";
+      label.textContent = `Couldn't load: ${s.error}. Reload the page to try again.`;
       break;
   }
 });
@@ -70,28 +73,12 @@ const whenReady = (fn) => (engineReady ? fn() : readyCallbacks.add(fn));
 // --- Shared helpers ----------------------------------------------------------
 
 const pickedMode = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? null;
-const modeLabel = (m) => (m === "privacy" ? "Privacy (relayed)" : "Performance (direct when possible)");
+const modeName = (m) => (m === "privacy" ? "Private" : "Fast");
 
 function describeEffective(effective, mine, peer) {
-  if (effective === "performance") return "Performance mode: both sides allowed a direct connection.";
-  const who = mine === "privacy" && peer === "privacy" ? "both of you" : mine === "privacy" ? "you" : "the other side";
-  return `Privacy mode (chosen by ${who}): all traffic is relayed and neither side sees the other's IP address.`;
-}
-
-/** Progress bar + "x of y · speed" text, with a speed estimate over the last few seconds. */
-function progressView(barId, textId, total) {
-  const samples = [];
-  return (bytes) => {
-    const now = performance.now();
-    samples.push([now, bytes]);
-    while (samples.length > 2 && now - samples[0][0] > 5000) samples.shift();
-    const [t0, b0] = samples[0];
-    const rate = now > t0 ? ((bytes - b0) * 1000) / (now - t0) : 0;
-    const bar = $(barId);
-    bar.max = total || 1;
-    bar.value = total ? bytes : 1;
-    setText(textId, `${fmtBytes(bytes)} of ${fmtBytes(total)}${rate > 0 && bytes < total ? ` · ${fmtBytes(rate)}/s` : ""}`);
-  };
+  if (effective === "performance") return "Fast: you both allowed a direct connection.";
+  const who = mine === "privacy" && peer === "privacy" ? "you both" : mine === "privacy" ? "you" : "the other side";
+  return `Private (chosen by ${who}): relayed, so neither side sees the other's IP address.`;
 }
 
 async function startSweeping(keep) {
@@ -101,7 +88,7 @@ async function startSweeping(keep) {
   setInterval(run, 5 * 60 * 1000);
 }
 
-// --- Sender ------------------------------------------------------------------
+// --- Sender: picking a file ----------------------------------------------------
 
 let listener = null;
 let currentCtl = null;
@@ -112,7 +99,70 @@ function updateStartButton() {
   const mode = pickedMode("send-mode");
   const btn = $("send-start");
   btn.disabled = !(file && mode && engineReady);
-  btn.textContent = engineReady ? "Create link" : "Waiting for secure engine…";
+  btn.textContent = !engineReady ? "Getting ready…" : !file ? "Choose a file first" : !mode ? "Choose how to connect" : "Create link";
+}
+
+function showPickedFile() {
+  const file = $("send-file").files[0];
+  setText("drop-error", "");
+  $("dropzone").hidden = !!file;
+  $("send-file-card").hidden = !file;
+  if (file) ui.fillFileCard($("send-file-card"), file);
+  updateStartButton();
+}
+
+$("send-file").onchange = showPickedFile;
+$("send-file-clear").onclick = () => {
+  $("send-file").value = "";
+  showPickedFile();
+  $("send-file").focus();
+};
+for (const r of document.querySelectorAll('input[name="send-mode"]')) r.onchange = updateStartButton;
+whenReady(updateStartButton);
+
+ui.setupDrop({
+  zone: $("dropzone"),
+  active: () => !$("send-new").hidden,
+  onFile: (file) => ui.setInputFile($("send-file"), file),
+  onError: (msg) => setText("drop-error", msg),
+});
+
+// --- Sender: sharing and sending ---------------------------------------------------
+
+function setupShare(link) {
+  $("share-link").value = link;
+  $("share-link").onfocus = (e) => e.target.select();
+  const copyBtn = $("copy-link");
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      $("share-link").select(); // let the user copy manually
+      return;
+    }
+    copyBtn.classList.add("copied");
+    copyBtn.querySelector("span").textContent = "Copied";
+    copyBtn.querySelector("use").setAttribute("href", "#i-check");
+    setTimeout(() => {
+      copyBtn.classList.remove("copied");
+      copyBtn.querySelector("span").textContent = "Copy";
+      copyBtn.querySelector("use").setAttribute("href", "#i-copy");
+    }, 2000);
+  };
+  const qrBtn = $("toggle-qr");
+  qrBtn.onclick = () => {
+    const open = $("qr-panel").hidden;
+    if (open && !$("qr").firstChild) ui.renderQR($("qr"), link);
+    $("qr-panel").hidden = !open;
+    qrBtn.setAttribute("aria-expanded", String(open));
+  };
+  // The share sheet hands the link (and with it the keys) to an app the
+  // user picks, which is what they asked for; offer it only where it
+  // exists (mostly mobile).
+  if (navigator.share && navigator.canShare?.({ url: link })) {
+    $("native-share").hidden = false;
+    $("native-share").onclick = () => navigator.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
+  }
 }
 
 async function startSender(state, file) {
@@ -122,10 +172,15 @@ async function startSender(state, file) {
   if (!(await storage.lock(state.id))) { show("busy"); return; }
   guardLeave = true;
   show("send-active");
-  setText("send-active-mode", modeLabel(state.m));
-  setText("send-active-file", `${file.name} (${fmtBytes(file.size)})`);
-  setText("send-active-status", "Starting relay connection…");
-  const progress = progressView("send-progress", "send-progress-text", file.size);
+  ui.setStep("send-active", 1);
+  setText("send-active-effective", state.m === "performance"
+    ? "You chose Fast. It's only used if the recipient also chooses Fast."
+    : "You chose Private: the recipient won't see your IP address.");
+  setText("send-active-file", file.name);
+  setText("send-active-size", fmtBytes(file.size));
+  setText("send-active-ext", ui.fileExt(file.name));
+  setText("send-active-status", "Starting…");
+  const progress = ui.progressView("send-progress", "send-progress-text", file.size);
   progress(0);
 
   const hashes = new ChunkHashes(file);
@@ -139,7 +194,9 @@ async function startSender(state, file) {
       currentCtl?.stop?.();
       const ctl = {};
       currentCtl = ctl;
-      setText("send-active-status", "Receiver connected, negotiating…");
+      $("share-block").hidden = true;
+      ui.setStep("send-active", 2);
+      setText("send-active-status", "Recipient connected…");
       try {
         await senderSession(conn, {
           state, file, hashes, iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
@@ -147,9 +204,13 @@ async function startSender(state, file) {
           onStatus: (s) => {
             if (s.phase === "negotiated") {
               setText("send-active-effective", describeEffective(s.effective, state.m, s.peerMode));
-              setText("send-active-status", s.fromChunk ? "Resuming…" : "Starting…");
+              setText("send-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
             }
-            if (s.phase === "transport") setText("send-active-status", s.via === "rtc" ? "Sending over a direct connection…" : "Sending through the relay…");
+            if (s.phase === "transport") {
+              $("send-transfer").dataset.phase = "active";
+              ui.setBadge($("send-badge"), s.via);
+              setText("send-active-status", "Sending");
+            }
             if (s.phase === "verifying") setText("send-active-status", "Verifying…");
           },
         });
@@ -159,8 +220,10 @@ async function startSender(state, file) {
         frag.scrub();
         setText("send-done-file", `${file.name} (${fmtBytes(file.size)})`);
         show("send-done");
+        ui.setStep("send-done", 3);
       } catch (err) {
         if (currentCtl !== ctl) return; // replaced by a newer connection
+        $("send-transfer").dataset.phase = "waiting";
         if (err instanceof CancelledError) {
           guardLeave = false;
           listener.close();
@@ -170,24 +233,21 @@ async function startSender(state, file) {
         } else if (err instanceof FatalError) {
           setText("send-active-status", err.message);
         } else {
-          setText("send-active-status", "Connection lost. Waiting for the receiver to reconnect…");
+          setText("send-active-status", "Connection lost. Waiting for the recipient to reconnect…");
         }
       }
     },
   );
-  $("share-link").value = frag.shareLink(state);
-  setText("send-active-status", "Waiting for the receiver to open the link…");
+  setupShare(frag.shareLink(state));
+  setText("send-active-status", "Waiting for the recipient to open the link…");
 }
-
-$("send-file").onchange = updateStartButton;
-for (const r of document.querySelectorAll('input[name="send-mode"]')) r.onchange = updateStartButton;
-whenReady(updateStartButton);
 
 $("send-start").onclick = async () => {
   const file = $("send-file").files[0];
   const mode = pickedMode("send-mode");
   if (!file || !mode) return;
   $("send-start").disabled = true;
+  $("send-start").textContent = "Creating link…";
   try {
     if (mode === "privacy") rtc.lockOutWebRTC();
     const s = await engine.newSession({ derpMapURL: config.derpMapURL });
@@ -204,8 +264,6 @@ $("send-start").onclick = async () => {
   }
 };
 
-$("copy-link").onclick = () => navigator.clipboard.writeText($("share-link").value);
-
 $("send-cancel").onclick = async () => {
   $("send-cancel").disabled = true;
   await currentCtl?.cancel?.();
@@ -219,7 +277,7 @@ $("send-cancel").onclick = async () => {
 function senderResume(state) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
   show("send-resume");
-  setText("send-resume-mode", modeLabel(state.m));
+  setText("send-resume-mode", modeName(state.m));
   $("send-resume-file").onchange = async () => {
     const file = $("send-resume-file").files[0];
     if (!file) return;
@@ -227,7 +285,7 @@ function senderResume(state) {
       setText("send-resume-error", "That's not the same file (name, size or modification time differ).");
       return;
     }
-    setText("send-resume-error", engineReady ? "" : "Waiting for secure engine…");
+    setText("send-resume-error", engineReady ? "" : "Getting ready…");
     whenReady(() => startSender(state, file).catch((err) => setText("send-resume-error", err.message)));
   };
 }
@@ -240,9 +298,10 @@ let recvStopped = false;
 async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
   show("recv-active");
+  ui.setStep("recv-active", 1);
   guardLeave = true;
   let progress = null;
-  setText("recv-active-status", engineReady ? "Connecting through the relay…" : "Waiting for secure engine…");
+  setText("recv-active-status", engineReady ? "Connecting…" : "Getting ready…");
   await engine.ready;
   const iceServers = state.rm === "performance" && state.sm === "performance" ? await rtc.stunServers(config.derpMapURL) : [];
 
@@ -250,12 +309,12 @@ async function receiverLoop(state) {
     if (attempt) {
       const wait = Math.min(30, 2 ** Math.min(attempt, 5));
       for (let s = wait; s > 0 && !recvStopped; s--) {
-        setText("recv-active-status", `Connection lost. Reconnecting in ${s} s… (keep the sender's page open)`);
+        setText("recv-active-status", `Connection lost. Retrying in ${s} s… (the sender's page must stay open)`);
         await sleep(1000);
       }
       if (recvStopped) return;
     }
-    setText("recv-active-status", "Connecting through the relay…");
+    setText("recv-active-status", "Connecting…");
     let conn;
     try {
       conn = await engine.dial({ addr: state.a, derpMapURL: config.derpMapURL, clientKey: state.k, verbose: config.verbose });
@@ -272,14 +331,21 @@ async function receiverLoop(state) {
         onProgress: (b) => progress?.(b),
         onStatus: (s) => {
           if (s.phase === "hello") {
-            setText("recv-active-file", `${s.hello.name} (${fmtBytes(s.hello.size)})`);
-            progress = progressView("recv-progress", "recv-progress-text", s.hello.size);
+            setText("recv-active-file", s.hello.name);
+            $("recv-active-file").title = s.hello.name;
+            setText("recv-active-size", fmtBytes(s.hello.size));
+            setText("recv-active-ext", ui.fileExt(s.hello.name));
+            progress = ui.progressView("recv-progress", "recv-progress-text", s.hello.size);
           }
           if (s.phase === "negotiated") {
             setText("recv-active-effective", describeEffective(s.effective, state.rm, s.peerMode));
-            setText("recv-active-status", s.fromChunk ? "Resuming…" : "Starting…");
+            setText("recv-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
           }
-          if (s.phase === "transport") setText("recv-active-status", s.via === "rtc" ? "Receiving over a direct connection…" : "Receiving through the relay…");
+          if (s.phase === "transport") {
+            $("recv-transfer").dataset.phase = "active";
+            ui.setBadge($("recv-badge"), s.via);
+            setText("recv-active-status", "Receiving");
+          }
           if (s.phase === "verifying") setText("recv-active-status", "Verifying…");
         },
       });
@@ -304,6 +370,7 @@ async function receiverLoop(state) {
         return;
       }
       console.info("session dropped:", err.message);
+      $("recv-transfer").dataset.phase = "waiting";
       attempt = Math.min(attempt, 1); // made progress: retry soon
     }
   }
@@ -328,6 +395,7 @@ let downloadURL = null;
 function showSave(state, meta) {
   guardLeave = false; // the data is safe in storage; a reload comes back here
   show("recv-save");
+  ui.setStep("recv-save", 2);
   setText("recv-save-file", `${meta.name} (${fmtBytes(meta.size)})`);
   $("recv-save-btn").onclick = async () => {
     const data = await storage.getFile(state.id);
@@ -414,7 +482,7 @@ async function receiver(state) {
 const f = frag.decode();
 if (!location.hash) {
   show("send-new");
-  updateStartButton();
+  showPickedFile();
   startSweeping(null);
 } else if (!f) {
   show("bad-link");
