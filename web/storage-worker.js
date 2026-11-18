@@ -27,6 +27,7 @@
 const ROOT = "fileporter";
 const HEARTBEAT_MS = 30_000;
 const open = new Map(); // id → {dir, data, hashes, meta: handle, metaObj, chunkSize}
+let writeLimit = 0; // testing only (?writelimit): simulated full disk
 
 async function rootDir() {
   return (await navigator.storage.getDirectory()).getDirectoryHandle(ROOT, { create: true });
@@ -184,6 +185,9 @@ const ops = {
     if (bytes.length !== expectLen) throw new Error(`chunk ${idx}: got ${bytes.length} bytes, want ${expectLen}`);
     const have = Math.floor((await st.hashes.getSize()) / 32);
     if (idx !== have) throw new Error(`chunk ${idx} out of order (have ${have})`);
+    if (writeLimit && idx * chunkSize + bytes.length > writeLimit) {
+      throw new DOMException("Simulated full storage (?writelimit)", "QuotaExceededError");
+    }
     const hash = await sha256(bytes);
     await st.data.write(bytes, { at: idx * chunkSize });
     await st.data.flush();
@@ -258,6 +262,11 @@ const ops = {
       }
     }
     return removed;
+  },
+
+  /** Testing only. */
+  async configure(args) {
+    writeLimit = args.writeLimit || 0;
   },
 
   async estimate() {

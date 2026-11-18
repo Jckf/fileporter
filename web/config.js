@@ -15,4 +15,9 @@ export const config = {
   // it has been inactive this long. Covers reloads and crash-and-reopen;
   // after it, the session is gone for good.
   sweepGraceMs: Number(params.get("sweepgrace")) || 30 * 60 * 1000,
+  // Testing only: simulate a nearly full disk on the receiver.
+  //   ?quota=<bytes>       report at most this much free storage
+  //   ?writelimit=<bytes>  fail writes past this offset with QuotaExceededError
+  simQuota: Number(params.get("quota")) || 0,
+  simWriteLimit: Number(params.get("writelimit")) || 0,
 };

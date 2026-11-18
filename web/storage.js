@@ -4,6 +4,8 @@
 // Page-side proxy for storage-worker.js, plus the pieces of storage
 // that must run on the page (reading the finished file, Web Locks).
 
+import { config } from "./config.js";
+
 let worker = null;
 const pending = new Map();
 let nextId = 1;
@@ -30,6 +32,7 @@ function getWorker() {
 // deploy removes the old version, so a tab that stays open across a
 // deploy must not fetch any of its files later.
 getWorker();
+if (config.simWriteLimit) call("configure", { writeLimit: config.simWriteLimit });
 
 function call(op, args, transfer) {
   const id = nextId++;
@@ -65,7 +68,11 @@ export const complete = (id) => call("complete", { id });
 export const reset = (id) => call("reset", { id });
 export const remove = (id) => call("remove", { id });
 export const sweep = (keep, graceMs) => call("sweep", { keep, graceMs });
-export const estimate = () => call("estimate", {});
+export async function estimate() {
+  const e = await call("estimate", {});
+  if (config.simQuota) e.quota = Math.min(e.quota || Infinity, e.usage + config.simQuota);
+  return e;
+}
 
 /** Persists chunk idx. Transfers (and so detaches) bytes' buffer when it owns all of it. */
 export function write(id, idx, bytes) {
