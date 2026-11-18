@@ -59,7 +59,7 @@ engine.onProgress((s) => {
           : `Preparing secure connection… ${Math.floor((100 * s.loaded) / s.total)}%`;
       break;
     case "retrying":
-      label.textContent = `Download failed, retrying (${s.attempt})…`;
+      label.textContent = `Download failed. Retrying (attempt ${s.attempt})…`;
       break;
     case "ready":
       status.dataset.state = "ready";
@@ -79,10 +79,11 @@ const whenReady = (fn) => (engineReady ? fn() : readyCallbacks.add(fn));
 const pickedMode = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? null;
 const modeName = (m) => (m === "privacy" ? "Private" : "Fast");
 
-function describeEffective(effective, mine, peer) {
-  if (effective === "performance") return "Fast: you both allowed a direct connection.";
-  const who = mine === "privacy" && peer === "privacy" ? "you both" : mine === "privacy" ? "you" : "the other side";
-  return `Private (chosen by ${who}): relayed, so neither side sees the other's IP address.`;
+/** peerRole: what the other side is called on this page ("the sender", "the recipient"). */
+function describeEffective(effective, mine, peer, peerRole) {
+  if (effective === "performance") return "Fast: you both chose a direct connection.";
+  const who = mine === "privacy" && peer === "privacy" ? "you both" : mine === "privacy" ? "you" : peerRole;
+  return `Private, because ${who} chose it: neither of you can see the other's IP address.`;
 }
 
 async function startSweeping(keep) {
@@ -179,7 +180,7 @@ async function startSender(state, file) {
   ui.setStep("send-active", 1);
   setText("send-active-effective", state.m === "performance"
     ? "You chose Fast. It's only used if the recipient also chooses Fast."
-    : "You chose Private: the recipient won't see your IP address.");
+    : "You chose Private. The recipient won't see your IP address.");
   setText("send-active-file", file.name);
   setText("send-active-size", fmtBytes(file.size));
   setText("send-active-ext", ui.fileExt(file.name));
@@ -207,7 +208,7 @@ async function startSender(state, file) {
           onProgress: progress,
           onStatus: (s) => {
             if (s.phase === "negotiated") {
-              setText("send-active-effective", describeEffective(s.effective, state.m, s.peerMode));
+              setText("send-active-effective", describeEffective(s.effective, state.m, s.peerMode, "the recipient"));
               setText("send-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
             }
             if (s.phase === "transport") {
@@ -263,7 +264,7 @@ $("send-start").onclick = async () => {
     frag.set("s", state);
     await startSender(state, file);
   } catch (err) {
-    setText("send-error", `Could not start: ${err.message}`);
+    setText("send-error", `Couldn't create the link: ${err.message}`);
     updateStartButton();
   }
 };
@@ -286,7 +287,7 @@ function senderResume(state) {
     const file = $("send-resume-file").files[0];
     if (!file) return;
     if (!frag.sameFile(state.f, await frag.fileFingerprint(file))) {
-      setText("send-resume-error", "That's not the same file (name, size or modification time differ).");
+      setText("send-resume-error", "That's not the same file. Its name, size or last-modified date is different.");
       return;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
@@ -321,7 +322,7 @@ async function receiverLoop(state) {
     if (attempt) {
       const wait = Math.min(5, attempt);
       for (let s = wait; s > 0 && !recvStopped; s--) {
-        setText("recv-active-status", `Connection lost. Retrying in ${s} s… (the sender's page must stay open)`);
+        setText("recv-active-status", `Connection lost. Trying again in ${s} s. The sender needs to keep their page open.`);
         await sleep(1000);
       }
       if (recvStopped) return;
@@ -351,7 +352,7 @@ async function receiverLoop(state) {
             progress = ui.progressView("recv-progress", "recv-progress-text", s.hello.size);
           }
           if (s.phase === "negotiated") {
-            setText("recv-active-effective", describeEffective(s.effective, state.rm, s.peerMode));
+            setText("recv-active-effective", describeEffective(s.effective, state.rm, s.peerMode, "the sender"));
             setText("recv-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
           }
           if (s.phase === "transport") {
@@ -398,7 +399,7 @@ $("recv-cancel").onclick = async () => {
   if (f) await storage.remove(f.state.id).catch(() => {});
   guardLeave = false;
   frag.scrub();
-  setText("cancelled-text", "You cancelled the transfer. Temporary data was removed.");
+  setText("cancelled-text", "You cancelled the transfer, and the partly downloaded file was deleted.");
   show("cancelled");
 };
 

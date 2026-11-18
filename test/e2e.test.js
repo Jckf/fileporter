@@ -291,7 +291,7 @@ tests["cancel-by-receiver"] = async (p) => {
   p.receiver.once("dialog", (d) => d.accept());
   await p.receiver.click("#recv-cancel");
   await p.receiver.locator("#cancelled").waitFor();
-  await p.sender.locator("#cancelled", { hasText: "receiver cancelled" }).waitFor({ timeout: 30_000 });
+  await p.sender.locator("#cancelled", { hasText: "recipient cancelled" }).waitFor({ timeout: 30_000 });
   await assertCleanedUp(p);
 };
 
@@ -375,7 +375,7 @@ tests["nospace-upfront"] = async (p) => {
   const { file, hash } = mkFile(3 * MiB);
   const link = await p.startSender(file, "privacy");
   await p.receiver.goto(withQuery(link, `quota=${MiB}`));
-  await p.receiver.locator("#recv-active-status", { hasText: "Not enough storage space" }).waitFor({ timeout: 60_000 });
+  await p.receiver.locator("#recv-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 60_000 });
   await p.receiver.locator("#recv-retry").waitFor();
   await p.sender.locator("#send-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 30_000 });
   // Space freed: the same link now works.

@@ -162,7 +162,7 @@ export function setupDrop({ active, onFile, onError, zone }) {
     hide();
     const items = Array.from(e.dataTransfer.items || []).filter((i) => i.kind === "file");
     const entry = items[0]?.webkitGetAsEntry?.();
-    if (entry?.isDirectory) { onError("Folders can't be sent directly. Zip the folder first, then drop the zip."); return; }
+    if (entry?.isDirectory) { onError("Folders can't be sent. Zip the folder first, then send the zip file."); return; }
     const files = e.dataTransfer.files;
     if (!files.length) return;
     if (files.length > 1) { onError("One file at a time. To send several, zip them first."); return; }
