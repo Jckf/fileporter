@@ -1,0 +1,77 @@
+/* Copyright (c) 2026 Jim C K Flaten
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1b1d21;
+  --muted: #5d6470;
+  --border: #d5d9e0;
+  --accent: #2f5bd3;
+  --accent-fg: #ffffff;
+  --surface: #f4f6f9;
+  --error: #b42318;
+  --ok: #1a7f37;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121418;
+    --fg: #e6e8ec;
+    --muted: #9aa2ae;
+    --border: #2c313a;
+    --accent: #7c9dff;
+    --accent-fg: #0d1020;
+    --surface: #1b1f26;
+    --error: #ff8a80;
+    --ok: #6fdc8c;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header, main, footer { max-width: 40rem; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 24px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.2rem; }
+
+#engine-status { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+#engine-status[data-state="ready"] { color: var(--ok); }
+#engine-status[data-state="error"] { color: var(--error); }
+#engine-progress { width: 8rem; }
+
+fieldset.modes { border: 0; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+fieldset.modes legend { font-weight: 600; margin-bottom: 8px; }
+label.mode {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer;
+}
+label.mode:has(input:checked) { border-color: var(--accent); }
+label.mode strong { display: block; }
+label.mode input { margin-top: 4px; }
+
+label.file { display: block; margin: 16px 0; }
+label.file input { display: block; margin-top: 4px; max-width: 100%; }
+
+button {
+  font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-fg); cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: transparent; color: var(--fg); border-color: var(--border); }
+
+.row { display: flex; gap: 8px; margin: 8px 0 16px; }
+.row input { flex: 1; min-width: 0; font: inherit; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg); }
+
+.error { color: var(--error); min-height: 1.5em; }
+.hint { color: var(--muted); font-size: 0.9rem; }
+
+footer { margin-top: 48px; padding-bottom: 24px; font-size: 0.85rem; color: var(--muted); }
+footer a { color: inherit; }
+
+main progress { width: 100%; height: 12px; margin-top: 8px; }
+.row-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }

@@ -1,0 +1,12 @@
+{
+  "name": "fileporter-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node e2e.test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  },
+  "license": "AGPL-3.0-or-later"
+}

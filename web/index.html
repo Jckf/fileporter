@@ -1,0 +1,164 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Jim C K Flaten
+     SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <!-- GitHub Pages can't send response headers, so the CSP lives here.
+       frame-ancestors can't be set from a meta tag; Pages doesn't send
+       X-Frame-Options either, so framing is possible but harmless: the
+       session keys are in the URL fragment, which a framing page sets
+       itself and can't read from us.
+       connect-src needs https: for the DERP map and wss: for the relays;
+       'wasm-unsafe-eval' lets WebAssembly compile without allowing eval. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' https: wss:; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>fileporter</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>fileporter</h1>
+    <div id="engine-status" data-state="loading" role="status" aria-live="polite">
+      <span id="engine-label">Preparing secure engine…</span>
+      <progress id="engine-progress" max="1" value="0"></progress>
+    </div>
+  </header>
+
+  <main>
+    <!-- Sender: new session -->
+    <section id="send-new" hidden>
+      <h2>Send a file</h2>
+      <p>The file goes straight from your browser to the recipient's, end-to-end encrypted. Nothing is stored on a server.</p>
+      <label class="file">Choose a file <input type="file" id="send-file"></label>
+
+      <fieldset class="modes">
+        <legend>How should you connect?</legend>
+        <label class="mode">
+          <input type="radio" name="send-mode" value="privacy">
+          <span><strong>Privacy</strong> All traffic goes through our relay. The recipient never sees your IP address. Slower. The relay operator can see your IP address.</span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="send-mode" value="performance">
+          <span><strong>Performance</strong> Connect directly when possible. Faster, but the recipient can see your IP address. Only used if the recipient also picks Performance.</span>
+        </label>
+      </fieldset>
+
+      <button id="send-start" disabled>Waiting for secure engine…</button>
+      <p id="send-error" class="error" role="alert"></p>
+    </section>
+
+    <!-- Sender: reopened URL, file must be picked again -->
+    <section id="send-resume" hidden>
+      <h2>Resume sending</h2>
+      <p>Mode: <strong id="send-resume-mode"></strong></p>
+      <p>Browsers don't let pages keep access to your files, so choose the same file again to continue.</p>
+      <label class="file">Choose the same file <input type="file" id="send-resume-file"></label>
+      <p id="send-resume-error" class="error" role="alert"></p>
+    </section>
+
+    <!-- Sender: listening / connected -->
+    <section id="send-active" hidden>
+      <h2>Sending</h2>
+      <p id="send-active-file"></p>
+      <p>Your choice: <strong id="send-active-mode"></strong></p>
+      <label for="share-link">Send this link to the recipient. Anyone with the link can receive the file while this page is open.</label>
+      <div class="row">
+        <input id="share-link" readonly>
+        <button id="copy-link">Copy</button>
+      </div>
+      <p id="send-active-effective"></p>
+      <progress id="send-progress" max="1" value="0"></progress>
+      <p id="send-progress-text" class="hint"></p>
+      <p id="send-active-status" role="status" aria-live="polite"></p>
+      <p class="hint">Keep this page open until the transfer finishes. Reloading this page resumes; navigating away ends the session.</p>
+      <button id="send-cancel" class="secondary">Cancel transfer</button>
+    </section>
+
+    <section id="send-done" hidden>
+      <h2>Delivered</h2>
+      <p><span id="send-done-file"></span> was received and verified.</p>
+      <p><a href="./">Send another file</a></p>
+    </section>
+
+    <!-- Receiver: choose mode -->
+    <section id="recv-choose" hidden>
+      <h2>Someone wants to send you a file</h2>
+      <fieldset class="modes">
+        <legend>How should you connect?</legend>
+        <label class="mode">
+          <input type="radio" name="recv-mode" value="privacy">
+          <span><strong>Privacy</strong> All traffic goes through our relay. The sender never sees your IP address. Slower. The relay operator can see your IP address.</span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="recv-mode" value="performance">
+          <span><strong>Performance</strong> Connect directly when possible. Faster, but the sender can see your IP address.</span>
+        </label>
+      </fieldset>
+      <button id="recv-continue" disabled>Continue</button>
+    </section>
+
+    <!-- Receiver: connecting / receiving -->
+    <section id="recv-active" hidden>
+      <h2>Receiving</h2>
+      <p id="recv-active-file"></p>
+      <p id="recv-active-effective"></p>
+      <progress id="recv-progress" max="1" value="0"></progress>
+      <p id="recv-progress-text" class="hint"></p>
+      <p id="recv-active-status" role="status" aria-live="polite"></p>
+      <p class="hint">Reloading this page resumes the transfer; navigating away ends it.</p>
+      <div class="row-buttons">
+        <button id="recv-retry" hidden>Try again</button>
+        <button id="recv-cancel" class="secondary">Cancel transfer</button>
+      </div>
+    </section>
+
+    <!-- Receiver: file complete, save it -->
+    <section id="recv-save" hidden>
+      <h2>File received</h2>
+      <p><span id="recv-save-file"></span> was received and verified.</p>
+      <p class="hint">It is held temporarily in this browser until you save it.</p>
+      <div class="row-buttons">
+        <button id="recv-save-btn">Save file</button>
+        <button id="recv-clear" class="secondary" hidden>Remove temporary copy</button>
+      </div>
+      <p id="recv-save-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="recv-cleared" hidden>
+      <h2>All done</h2>
+      <p id="recv-cleared-text"></p>
+    </section>
+
+    <section id="cancelled" hidden>
+      <h2>Transfer cancelled</h2>
+      <p id="cancelled-text"></p>
+      <p><a href="./">Send a file</a></p>
+    </section>
+
+    <section id="busy" hidden>
+      <h2>Already open</h2>
+      <p>This transfer is open in another tab or window. Continue there, or close it and reload this page.</p>
+    </section>
+
+    <section id="unsupported" hidden>
+      <h2>Browser not supported</h2>
+      <p>Receiving needs a current version of Chrome, Edge, Opera, Firefox or Safari.</p>
+    </section>
+
+    <section id="bad-link" hidden>
+      <h2>This link isn't valid</h2>
+      <p>It may be incomplete or from an incompatible version. <a href="./">Send a file instead</a>.</p>
+    </section>
+  </main>
+
+  <footer>
+    <!-- AGPL-3.0 section 13: users interacting over a network must be offered the source. -->
+    <a href="https://github.com/Jckf/fileporter">Source code</a> (AGPL-3.0)
+    · <a href="THIRD_PARTY_LICENSES.txt">Third-party licenses</a>
+    · Built on <a href="https://github.com/tailscale/tailcat">tailcat</a>; not affiliated with Tailscale.
+  </footer>
+</body>
+</html>
