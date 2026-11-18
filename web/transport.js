@@ -7,6 +7,7 @@
 //   sendChunk(idx, bytes)  one whole chunk; resolves when the transport
 //                          accepted it (backpressure)
 //   next(t)                next control message of type t
+//   nextOf(t1, t2, …)      next control message of any of these types
 //   nextEvent()            next {kind:"control", msg} | {kind:"chunk", idx, bytes}
 //   finish()               flush, let the peer see the end, then shut down
 //   shutdown()             tear down immediately
@@ -78,7 +79,9 @@ class EventQueue {
     if (this.err) return Promise.reject(this.err);
     return new Promise((resolve, reject) => this.waiters.push({ match, resolve, reject }));
   }
-  next(t) { return this.take((it) => it.kind === "control" && it.msg.t === t).then((it) => it.msg); }
+  next(t) { return this.nextOf(t); }
+  /** Next control message whose type is any of ts. */
+  nextOf(...ts) { return this.take((it) => it.kind === "control" && ts.includes(it.msg.t)).then((it) => it.msg); }
   nextEvent() { return this.take(() => true); }
   setSignalingHandler(fn) {
     this.signalingHandler = fn;

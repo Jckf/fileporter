@@ -18,6 +18,10 @@
 //   S→R {t:"done", root}     root = SHA-256(H0 ‖ H1 ‖ … ‖ Hn-1)
 //   R→S {t:"complete", ok, root}
 //   either way {t:"cancel"}  the other side gave up; forget the session
+//   R→S {t:"nospace"}        the receiver's storage is full (instead of
+//         "resume" when the up-front check fails, or at any point while
+//         storing). Not final: freeing space and reloading resumes. It
+//         deliberately carries no numbers about the receiver's storage.
 //
 // A dropped connection at any point is resumable: the receiver redials
 // and the handshake picks up at the first chunk it doesn't have.
@@ -38,6 +42,11 @@ export const effectiveMode = (a, b) => (a === "privacy" || b === "privacy" ? "pr
 export class FatalError extends Error {}
 /** The other side cancelled the transfer. */
 export class CancelledError extends FatalError {}
+/** The receiver's browser storage is full. Freeing space and retrying resumes. */
+export class NoSpaceError extends FatalError {}
+
+const NOSPACE_SENDER = "The recipient's browser doesn't have enough storage space for this file. The transfer will continue if they free up space and reload their page.";
+const isQuotaError = (err) => err?.name === "QuotaExceededError";
 
 const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, "0")).join("");
 const sha256 = async (bytes) => new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -92,7 +101,8 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
       t: "hello", v: PROTOCOL_VERSION, id: state.id, mode: state.m,
       name: file.name, size: file.size, type: file.type, chunkSize: CHUNK,
     });
-    const resume = await link.next("resume");
+    const resume = await link.nextOf("resume", "nospace");
+    if (resume.t === "nospace") throw new NoSpaceError(NOSPACE_SENDER);
     if (resume.id !== state.id) throw new FatalError("receiver is on a different transfer");
     let from = Number.isInteger(resume.fromChunk) && resume.fromChunk >= 0 && resume.fromChunk <= n ? resume.fromChunk : 0;
     if (from > 0 && hex(await hashes.get(from - 1)) !== resume.prevHash) from = 0;
@@ -135,6 +145,8 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
             complete = m;
           } else if (m.t === "cancel") {
             throw new CancelledError("The receiver cancelled the transfer.");
+          } else if (m.t === "nospace") {
+            throw new NoSpaceError(NOSPACE_SENDER);
           }
           notify();
         }
@@ -215,7 +227,7 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
     const { usage, quota } = await storage.estimate();
     const need = hello.size - st.chunks * CHUNK;
     if (quota && quota - usage < need) {
-      throw new FatalError(`Not enough storage space in this browser (need ${fmtBytes(need)}, ${fmtBytes(quota - usage)} available).`);
+      throw new NoSpaceError(`Not enough storage space in this browser (need ${fmtBytes(need)}, ${fmtBytes(quota - usage)} available). Free up some space, then retry.`);
     }
     onStatus({ phase: "hello", hello });
 
@@ -279,6 +291,17 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
     await transport.send({ t: "complete", ok, root });
     await end();
     return { hello, via };
+  } catch (err) {
+    // Storage full, whether caught up front or by a failing write:
+    // final for this session (redialing would just fail again), but
+    // what's stored is kept so freeing space and retrying resumes.
+    if (!(err instanceof NoSpaceError) && !isQuotaError(err)) throw err;
+    try {
+      await transport.send({ t: "nospace" });
+      await end();
+    } catch {}
+    throw err instanceof NoSpaceError ? err
+      : new NoSpaceError("This browser ran out of storage space. Free up some space, then retry to continue where it left off.");
   } finally {
     ctl.stop = ctl.cancel = null;
     if (transport !== link) transport.shutdown();
