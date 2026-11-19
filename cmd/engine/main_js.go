@@ -264,16 +264,21 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 		"port": int(port),
 		"read": js.FuncOf(func(this js.Value, args []js.Value) any {
 			return makePromise(func() (any, error) {
-				n, err := c.Read(buf)
-				if n > 0 {
-					u8 := js.Global().Get("Uint8Array").New(n)
-					js.CopyBytesToJS(u8, buf[:n])
-					return u8, nil
+				for {
+					n, err := c.Read(buf)
+					if n > 0 {
+						u8 := js.Global().Get("Uint8Array").New(n)
+						js.CopyBytesToJS(u8, buf[:n])
+						return u8, nil
+					}
+					if errors.Is(err, io.EOF) {
+						return js.Null(), nil
+					}
+					if err != nil {
+						return nil, err
+					}
+					// (0, nil) is allowed and means nothing yet, not EOF.
 				}
-				if err == nil || errors.Is(err, io.EOF) {
-					return js.Null(), nil
-				}
-				return nil, err
 			})
 		}),
 		"write": js.FuncOf(func(this js.Value, args []js.Value) any {
