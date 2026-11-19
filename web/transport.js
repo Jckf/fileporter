@@ -203,10 +203,11 @@ export class RtcTransport extends EventQueue {
       this.shutdown();
     }
   }
-  send(msg) {
-    if (this.err) return Promise.reject(this.err);
+  // async: a closed channel makes dc.send throw, and callers handle
+  // that as a rejection (send(…).catch()), like Link's.
+  async send(msg) {
+    if (this.err) throw this.err;
     this.dc.send(JSON.stringify(msg));
-    return Promise.resolve();
   }
   bye() { if (!this.err) try { this.dc.send('{"t":"bye"}'); } catch {} }
   async sendChunk(idx, bytes) {
