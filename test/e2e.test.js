@@ -276,8 +276,9 @@ for (const [sm, rm, wantVia] of [
     if (rm === "privacy" || sm === "privacy") {
       if (pcs[0] || pcs[1]) throw new Error(`privacy leak: RTCPeerConnections created ${pcs}`);
     }
-    await p.receiver.click("#recv-clear");
-    await p.receiver.locator("#recv-cleared").waitFor();
+    // The download worker saw the browser read every byte, so the
+    // temporary copy goes without asking.
+    await p.receiver.locator("#recv-cleared", { hasText: "Saved to your downloads" }).waitFor({ timeout: 30_000 });
     await assertCleanedUp(p);
     for (const [who, page] of [["sender", p.sender], ["receiver", p.receiver]]) {
       if ((await wake(page)).held !== 0) throw new Error(`${who}: wake lock still held after the transfer`);
@@ -327,6 +328,23 @@ tests["save-picker"] = async (p) => {
   });
   if (got !== hash) throw new Error("saved file hash mismatch");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+  await assertCleanedUp(p);
+};
+
+tests["download-fallback"] = async (p) => {
+  // Without a service worker (the download can't be followed), saving
+  // falls back to a plain download, and the user removes the copy.
+  await p.rctx.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "serviceWorker", { get: () => undefined, configurable: true });
+  });
+  const { file, hash } = mkFile(MiB + 99);
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(link, "privacy");
+  const got = await p.download();
+  if (sha(got) !== hash) throw new Error("downloaded file hash mismatch");
+  if (!(await opfsList(p.receiver)).length) throw new Error("copy removed before the user confirmed");
+  await p.receiver.click("#recv-clear");
+  await p.receiver.locator("#recv-cleared").waitFor();
   await assertCleanedUp(p);
 };
 

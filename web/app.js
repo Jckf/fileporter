@@ -14,6 +14,7 @@ import * as storage from "./storage.js";
 import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
+import * as dl from "./download.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {
@@ -467,9 +468,20 @@ function showSave(state, meta) {
       await data.stream().pipeTo(w);
       await clearReceived(state, "Saved. The temporary copy was removed from this browser.");
     } else {
-      // Firefox, Safari: a regular download from the stored file. We
-      // can't observe when the browser has finished copying it, so the
-      // user confirms before we delete the source.
+      // Firefox, Safari: a regular download, through the download
+      // worker, which says when the browser has read all of it.
+      setText("recv-save-status", "Saving…");
+      const result = await dl.download(state.id, meta);
+      if (result === "done") {
+        await clearReceived(state, "Saved to your downloads. fileporter's temporary copy was removed.");
+        return;
+      }
+      if (result === "cancelled") {
+        setText("recv-save-status", "Saving stopped before it finished. Save the file again to retry.");
+        return;
+      }
+      // No worker here: a plain download from the stored file. Its end
+      // can't be observed, so the user confirms before we delete it.
       downloadURL ??= URL.createObjectURL(new File([data], meta.name, { type: meta.type || "application/octet-stream" }));
       const a = document.createElement("a");
       a.href = downloadURL;
@@ -509,6 +521,7 @@ async function receiver(state) {
   startSweeping(state.id);
 
   // Already received in an earlier visit (reload on the save step):
+  dl.prepare(); // active by the time the file is saved
   // straight to saving, no network needed.
   const existing = await storage.peek(state.id);
   if (existing.exists && existing.meta?.status === "complete") {

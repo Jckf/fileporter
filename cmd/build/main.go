@@ -3,8 +3,11 @@
 
 // Command build produces the static site in dist/:
 //
-//   - index.html, boot.js, favicon.svg, manifest.webmanifest, icons/
-//     and THIRD_PARTY_LICENSES.txt at the root. The web app manifest
+//   - index.html, boot.js, sw.js, favicon.svg, manifest.webmanifest,
+//     icons/ and THIRD_PARTY_LICENSES.txt at the root. sw.js must be
+//     there to serve dl/ (a service worker's scope can't be above its
+//     script), and like boot.js stays compatible with every deployed
+//     page instead of being versioned. The web app manifest
 //     stays put so its start_url ("./", relative to the manifest) is
 //     the site root, and the installed app's identity (derived from
 //     start_url) never changes. icons/*.png are rendered from the
@@ -145,7 +148,7 @@ func run(out string) error {
 			return err
 		}
 		switch {
-		case rel == "index.html", rel == "boot.js", rel == "favicon.svg", rel == "manifest.webmanifest",
+		case rel == "index.html", rel == "boot.js", rel == "sw.js", rel == "favicon.svg", rel == "manifest.webmanifest",
 			strings.HasPrefix(rel, "icons/"):
 			rootFiles[rel] = b
 		default:

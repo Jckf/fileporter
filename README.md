@@ -28,11 +28,17 @@ Done (P0–P2):
   noticed at once; over the relay, keepalive pings detect a vanished
   peer within 12 s.
 - Receiver storage in OPFS via sync access handles in a worker. Cleanup:
-  deleted on cancel or confirmed save; abandoned transfers are swept
-  once no tab holds their Web Lock and they have been inactive for 30 min.
+  deleted on cancel or once saved; abandoned transfers are swept once no
+  tab holds their Web Lock and they have been inactive for 30 min.
+- Saving: Chromium writes to a file picked with showSaveFilePicker.
+  Firefox and Safari download through a service worker scoped to dl/
+  (web/sw.js) that streams the stored file and reports when the browser
+  has read all of it, so the copy is deleted without asking. Without a
+  service worker it falls back to a plain download and a "Remove
+  temporary copy" button.
 
 - Installable as an app (PWA): web app manifest and icons at the site
-  root. Deliberately no service worker: the app needs the network
+  root. Deliberately no offline cache: the app needs the network
   anyway, and a cache would fight the versioned deploys.
 
 Next: own DERP/STUN infrastructure (P3; currently tailcat's free,
