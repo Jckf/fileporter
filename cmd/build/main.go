@@ -78,7 +78,10 @@ func run(out string) error {
 
 	// Build the engine.
 	raw := filepath.Join(out, "engine.wasm.tmp")
-	cmd := exec.Command("go", "build", "-tags", wasmTags, "-trimpath", "-ldflags=-s -w", "-o", raw, "./cmd/engine")
+	// -buildvcs=false: otherwise the git commit and dirty flag are
+	// stamped into the binary, and every commit would change the
+	// engine's hash and make browsers download it again.
+	cmd := exec.Command("go", "build", "-tags", wasmTags, "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", raw, "./cmd/engine")
 	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {

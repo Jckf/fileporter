@@ -13,6 +13,7 @@ import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
 import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
 import * as ui from "./ui.js";
+import { keepAwake } from "./wakelock.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {
@@ -29,6 +30,12 @@ ui.renderSteps();
 // While a transfer can still be resumed, warn before leaving: reloading
 // resumes, but navigating away loses the session.
 let guardLeave = false;
+// The same span also keeps the screen awake: a phone locking itself
+// would suspend the page and drop the transfer.
+function setGuard(on) {
+  guardLeave = on;
+  keepAwake(on);
+}
 window.addEventListener("beforeunload", (e) => {
   if (guardLeave) { e.preventDefault(); e.returnValue = ""; }
 });
@@ -175,7 +182,7 @@ async function startSender(state, file) {
   // can't create an RTCPeerConnection at all.
   if (state.m === "privacy") rtc.lockOutWebRTC();
   if (!(await storage.lock(state.id))) { show("busy"); return; }
-  guardLeave = true;
+  setGuard(true);
   show("send-active");
   ui.setStep("send-active", 1);
   setText("send-active-effective", state.m === "performance"
@@ -220,7 +227,7 @@ async function startSender(state, file) {
           },
         });
         delivered = true;
-        guardLeave = false;
+        setGuard(false);
         listener.close();
         frag.scrub();
         setText("send-done-file", `${file.name} (${fmtBytes(file.size)})`);
@@ -230,7 +237,7 @@ async function startSender(state, file) {
         if (currentCtl !== ctl) return; // replaced by a newer connection
         $("send-transfer").dataset.phase = "waiting";
         if (err instanceof CancelledError) {
-          guardLeave = false;
+          setGuard(false);
           listener.close();
           frag.scrub();
           setText("cancelled-text", err.message);
@@ -254,7 +261,7 @@ async function startSender(state, file) {
  */
 function senderStartFailed(err, errorId) {
   if ($("send-active").hidden) { setText(errorId, err.message); return false; }
-  guardLeave = false;
+  setGuard(false);
   setText("send-active-status", `Couldn't start sending: ${err.message}. Reload the page to try again.`);
   return true;
 }
@@ -287,7 +294,7 @@ $("send-cancel").onclick = async () => {
   $("send-cancel").disabled = true;
   await currentCtl?.cancel?.();
   listener?.close();
-  guardLeave = false;
+  setGuard(false);
   frag.scrub();
   setText("cancelled-text", "You cancelled the transfer.");
   show("cancelled");
@@ -322,7 +329,7 @@ async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
   show("recv-active");
   ui.setStep("recv-active", 1);
-  guardLeave = true;
+  setGuard(true);
   let progress = null;
   setText("recv-active-status", engineReady ? "Connecting…" : "Getting ready…");
   await engine.ready;
@@ -385,14 +392,14 @@ async function receiverLoop(state) {
       if (recvStopped) return;
       if (err instanceof CancelledError) {
         await storage.remove(state.id).catch(() => {});
-        guardLeave = false;
+        setGuard(false);
         frag.scrub();
         setText("cancelled-text", err.message);
         show("cancelled");
         return;
       }
       if (err instanceof FatalError) {
-        guardLeave = false;
+        setGuard(false);
         setText("recv-active-status", err.message);
         $("recv-retry").hidden = false;
         return;
@@ -411,7 +418,7 @@ $("recv-cancel").onclick = async () => {
   await recvCtl?.cancel?.();
   const f = frag.decode();
   if (f) await storage.remove(f.state.id).catch(() => {});
-  guardLeave = false;
+  setGuard(false);
   frag.scrub();
   setText("cancelled-text", "You cancelled the transfer, and the partly downloaded file was deleted.");
   show("cancelled");
@@ -420,7 +427,7 @@ $("recv-cancel").onclick = async () => {
 let downloadURL = null;
 
 function showSave(state, meta) {
-  guardLeave = false; // the data is safe in storage; a reload comes back here
+  setGuard(false); // the data is safe in storage; a reload comes back here
   show("recv-save");
   ui.setStep("recv-save", 2);
   setText("recv-save-file", `${meta.name} (${fmtBytes(meta.size)})`);

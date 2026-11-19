@@ -106,7 +106,30 @@ const initScript = () => {
     });
   }
   delete window.showSaveFilePicker;
+  // Headless browsers can't hold a real screen wake lock; record what
+  // the page asks for instead.
+  window.__wake = { held: 0, requests: 0 };
+  const fakeWakeLock = {
+    async request(type) {
+      if (type !== "screen") throw new TypeError("bad wake lock type");
+      window.__wake.requests++;
+      window.__wake.held++;
+      const s = new EventTarget();
+      s.released = false;
+      s.type = type;
+      s.release = async () => {
+        if (s.released) return;
+        s.released = true;
+        window.__wake.held--;
+        s.dispatchEvent(new Event("release"));
+      };
+      return s;
+    },
+  };
+  Object.defineProperty(Navigator.prototype, "wakeLock", { get: () => fakeWakeLock, configurable: true });
 };
+
+const wake = (page) => page.evaluate(() => window.__wake);
 
 const opfsList = (page) => page.evaluate(async () => {
   try {
@@ -241,8 +264,10 @@ for (const [sm, rm, wantVia] of [
     // Not a multiple of the 1 MiB chunk size, to exercise the short last chunk.
     const { file, hash } = mkFile(3 * MiB + 12345);
     const link = await p.startSender(file, sm);
+    if ((await wake(p.sender)).held !== 1) throw new Error("sender: no wake lock while waiting for the recipient");
     await p.openReceiver(link, sm, rm);
     const got = await p.download();
+    if ((await wake(p.receiver)).requests < 1) throw new Error("receiver: never asked for a wake lock");
     if (sha(got) !== hash) throw new Error("downloaded file hash mismatch");
     await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
     const via = p.logs.some((l) => l.includes("direct connection failed")) ? "relay" : (sm === "performance" && rm === "performance" ? "rtc" : "relay");
@@ -254,6 +279,9 @@ for (const [sm, rm, wantVia] of [
     await p.receiver.click("#recv-clear");
     await p.receiver.locator("#recv-cleared").waitFor();
     await assertCleanedUp(p);
+    for (const [who, page] of [["sender", p.sender], ["receiver", p.receiver]]) {
+      if ((await wake(page)).held !== 0) throw new Error(`${who}: wake lock still held after the transfer`);
+    }
     return `via=${via} pcs=${pcs.join("/")}${fallback ? " (WebRTC unavailable here; checked relay fallback)" : ""}`;
   };
 }
