@@ -539,8 +539,18 @@ tests["pwa"] = async (p) => {
     const icons = [];
     for (const i of m.icons || []) icons.push({ ...i, got: await load(new URL(i.src, href).href) });
     const apple = document.querySelector('link[rel="apple-touch-icon"]')?.href;
+    // iOS launch screens: each must be exactly the size its media
+    // query selects, or iOS ignores it.
+    const splashes = [];
+    for (const l of document.querySelectorAll('link[rel="apple-touch-startup-image"]')) {
+      const q = (k) => Number(new RegExp(`${k}: (\\d+)`).exec(l.media)?.[1]);
+      const [w, h, dpr] = [q("device-width"), q("device-height"), q("-webkit-device-pixel-ratio")];
+      const portrait = l.media.includes("portrait");
+      const want = portrait ? `${w * dpr}x${h * dpr}` : `${h * dpr}x${w * dpr}`;
+      splashes.push({ href: l.getAttribute("href"), want, got: await load(l.href) });
+    }
     return {
-      m, icons,
+      m, icons, splashes,
       startURL: new URL(m.start_url, href).href,
       apple: apple ? await load(apple) : "missing",
     };
@@ -555,7 +565,9 @@ tests["pwa"] = async (p) => {
   if (!has("192x192", "any") || !has("512x512", "any")) throw new Error("needs 192 and 512 px icons");
   if (!has("512x512", "maskable")) throw new Error("needs a maskable icon");
   if (r.apple !== "180x180") throw new Error(`apple-touch-icon: ${r.apple}`);
-  return `${icons.length} icons`;
+  if (r.splashes.length < 2) throw new Error("no iOS launch screens");
+  for (const sp of r.splashes) if (sp.got !== sp.want) throw new Error(`launch screen ${sp.href}: ${sp.got}, want ${sp.want}`);
+  return `${icons.length} icons, ${r.splashes.length} launch screens`;
 };
 tests["pwa"].always = true;
 

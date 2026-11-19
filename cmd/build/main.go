@@ -14,7 +14,8 @@
 //     SVGs next to them and committed, e.g.
 //     rsvg-convert -w 512 -h 512 icon.svg -o icon-512.png
 //     (icon-192 and icon-512 from icon.svg; icon-maskable-512 and the
-//     180 px apple-touch-icon from icon-maskable.svg).
+//     180 px apple-touch-icon from icon-maskable.svg). icons/splash/
+//     holds the iPhone launch screens, made by go run ./cmd/splash.
 //   - v/<hash>/: every other page asset (JS modules, workers, CSS,
 //     wasm_exec.js, vendored libraries, engine-manifest.json). <hash>
 //     covers all of them, and index.html is rewritten to point into
