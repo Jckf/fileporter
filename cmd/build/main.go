@@ -46,7 +46,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -93,7 +92,9 @@ func run(out string) error {
 
 	var gz bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
-	zw.Write(wasm)
+	if _, err := zw.Write(wasm); err != nil {
+		return err
+	}
 	if err := zw.Close(); err != nil {
 		return err
 	}
@@ -197,23 +198,6 @@ func run(out string) error {
 	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz)",
 		out, version, name, float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20))
 	return nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	o, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(o, in); err != nil {
-		o.Close()
-		return err
-	}
-	return o.Close()
 }
 
 // writeThirdPartyLicenses collects the license files of every module
