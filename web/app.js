@@ -424,7 +424,18 @@ function showSave(state, meta) {
   show("recv-save");
   ui.setStep("recv-save", 2);
   setText("recv-save-file", `${meta.name} (${fmtBytes(meta.size)})`);
-  $("recv-save-btn").onclick = async () => {
+  const btn = $("recv-save-btn");
+  btn.onclick = async () => {
+    btn.disabled = true; // one picker or download at a time
+    try {
+      await save();
+    } catch (err) {
+      setText("recv-save-status", `Couldn't save the file: ${err.message}. Try again.`);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  const save = async () => {
     const data = await storage.getFile(state.id);
     if ("showSaveFilePicker" in window) {
       // Chromium (incl. Edge, Opera): stream straight to the chosen file,
