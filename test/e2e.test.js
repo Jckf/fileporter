@@ -258,6 +258,50 @@ for (const [sm, rm, wantVia] of [
   };
 }
 
+tests["save-picker"] = async (p) => {
+  // Chromium's save path: showSaveFilePicker and a stream into the
+  // chosen file. The initScript hides the real picker (Playwright can't
+  // drive it); this installs a stand-in that keeps what's written in
+  // memory, first failing like a full disk, then working.
+  const { file, hash } = mkFile(MiB + 4321);
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(link, "privacy");
+  const r = p.receiver;
+  await r.locator("#recv-save").waitFor({ timeout: 300_000 });
+  const stub = (fail) => {
+    window.__saved = [];
+    window.showSaveFilePicker = async () => ({
+      createWritable: async () => new WritableStream({
+        write(chunk) {
+          if (fail) throw new DOMException("Simulated full disk", "QuotaExceededError");
+          window.__saved.push(new Uint8Array(chunk));
+        },
+      }),
+    });
+  };
+
+  await r.evaluate(stub, true);
+  await r.click("#recv-save-btn");
+  await r.locator("#recv-save-status", { hasText: "Couldn't save the file" }).waitFor({ timeout: 10_000 });
+  await r.locator("#recv-save-btn:enabled").waitFor({ timeout: 5_000 });
+  if (!(await opfsList(r)).length) throw new Error("received data deleted after a failed save");
+
+  await r.evaluate(stub, false);
+  await r.click("#recv-save-btn");
+  await r.locator("#recv-cleared").waitFor({ timeout: 30_000 });
+  const got = await r.evaluate(async () => {
+    const parts = window.__saved;
+    const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+    let off = 0;
+    for (const c of parts) { all.set(c, off); off += c.length; }
+    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
+    return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+  });
+  if (got !== hash) throw new Error("saved file hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+  await assertCleanedUp(p);
+};
+
 tests["empty-file"] = async (p) => {
   const { file, hash } = mkFile(0, "empty.txt");
   const link = await p.startSender(file, "privacy");
