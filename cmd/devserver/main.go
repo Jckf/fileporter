@@ -51,6 +51,7 @@ func main() {
 			"connect-src 'self' https: wss:",
 			"img-src 'self' data:",
 			"style-src 'self'",
+			"object-src 'none'",
 			"base-uri 'none'",
 			"form-action 'none'",
 			"frame-ancestors 'none'",
