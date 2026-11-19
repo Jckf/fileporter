@@ -7,6 +7,7 @@
 import { config } from "./config.js";
 
 let worker = null;
+let failed = null; // set if the worker couldn't start; every call rejects
 const pending = new Map();
 let nextId = 1;
 
@@ -24,6 +25,13 @@ function getWorker() {
         p.reject(err);
       }
     };
+    // Ops catch their own errors, so this means the worker itself
+    // failed (didn't load). Fail every call rather than leave it hanging.
+    worker.onerror = (e) => {
+      failed = new Error(`storage worker failed: ${e.message || "could not load"}`);
+      for (const p of pending.values()) p.reject(failed);
+      pending.clear();
+    };
   }
   return worker;
 }
@@ -32,9 +40,10 @@ function getWorker() {
 // deploy removes the old version, so a tab that stays open across a
 // deploy must not fetch any of its files later.
 getWorker();
-if (config.simWriteLimit) call("configure", { writeLimit: config.simWriteLimit });
+if (config.simWriteLimit) call("configure", { writeLimit: config.simWriteLimit }).catch(() => {});
 
 function call(op, args, transfer) {
+  if (failed) return Promise.reject(failed);
   const id = nextId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
