@@ -141,26 +141,34 @@ ui.setupDrop({
 
 // --- Sender: sharing and sending ---------------------------------------------------
 
+/**
+ * Makes btn (icon + <span> label) copy text, confirming with
+ * "Copied" for 2 s. onFail runs if the clipboard refuses.
+ */
+function copyButton(btn, text, onFail) {
+  const label = btn.querySelector("span").textContent;
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      onFail();
+      return;
+    }
+    btn.classList.add("copied");
+    btn.querySelector("span").textContent = "Copied";
+    btn.querySelector("use").setAttribute("href", "#i-check");
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.querySelector("span").textContent = label;
+      btn.querySelector("use").setAttribute("href", "#i-copy");
+    }, 2000);
+  };
+}
+
 function setupShare(link) {
   $("share-link").value = link;
   $("share-link").onfocus = (e) => e.target.select();
-  const copyBtn = $("copy-link");
-  copyBtn.onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-    } catch {
-      $("share-link").select(); // let the user copy manually
-      return;
-    }
-    copyBtn.classList.add("copied");
-    copyBtn.querySelector("span").textContent = "Copied";
-    copyBtn.querySelector("use").setAttribute("href", "#i-check");
-    setTimeout(() => {
-      copyBtn.classList.remove("copied");
-      copyBtn.querySelector("span").textContent = "Copy";
-      copyBtn.querySelector("use").setAttribute("href", "#i-copy");
-    }, 2000);
-  };
+  copyButton($("copy-link"), link, () => $("share-link").select()); // let the user copy manually
   const qrBtn = $("toggle-qr");
   qrBtn.onclick = () => {
     const open = $("qr-panel").hidden;
@@ -485,7 +493,18 @@ async function clearReceived(state, message) {
 }
 
 async function receiver(state) {
-  if (!(await storage.supported())) { show("unsupported"); return; }
+  if (!(await storage.supported())) {
+    // The way out is opening the link elsewhere, and in a private tab
+    // (on phones especially) the address isn't easy to get at.
+    const btn = $("unsupported-copy");
+    btn.hidden = false;
+    copyButton(btn, location.href, () => {
+      btn.querySelector("span").textContent = "Couldn't copy. Use the address bar.";
+      btn.disabled = true;
+    });
+    show("unsupported");
+    return;
+  }
   if (!(await storage.lock(state.id))) { show("busy"); return; }
   startSweeping(state.id);
 

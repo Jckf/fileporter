@@ -460,6 +460,13 @@ tests["storage-support"] = async (p) => {
     // Must stay put, not dial the sender and fail in a loop.
     await new Promise((r) => setTimeout(r, 3000));
     if (p.logs.some((l) => l.startsWith("R") && l.includes("session dropped"))) throw new Error("receiver retried without storage");
+    // The way out: copy the link to open it in a normal window.
+    await p.receiver.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t) => { window.__copied = t; } }, configurable: true });
+    });
+    await p.receiver.click("#unsupported-copy");
+    await p.receiver.locator("#unsupported-copy", { hasText: "Copied" }).waitFor({ timeout: 5_000 });
+    if ((await p.receiver.evaluate(() => window.__copied)) !== link) throw new Error("copied something other than the link");
   }
   return p.storageWorks ? "receiving supported" : "unsupported screen shown";
 };
