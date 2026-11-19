@@ -275,15 +275,18 @@ const ops = {
   },
 };
 
-setInterval(async () => {
-  for (const st of open.values()) {
-    try { if (st.meta) await writeMeta(st); } catch {}
-  }
+// Calls (and heartbeats) are processed one at a time, in order: sync
+// access handles must not be used concurrently.
+let chain = Promise.resolve();
+
+setInterval(() => {
+  chain = chain.then(async () => {
+    for (const st of open.values()) {
+      try { if (st.meta) await writeMeta(st); } catch {}
+    }
+  });
 }, HEARTBEAT_MS);
 
-// Calls are processed one at a time, in order: sync access handles
-// must not be used concurrently.
-let chain = Promise.resolve();
 self.onmessage = ({ data: m }) => {
   chain = chain.then(async () => {
     try {
