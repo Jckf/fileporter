@@ -490,6 +490,19 @@ async function receiver(state) {
   };
 }
 
+// --- Offline warning ---------------------------------------------------------
+
+// navigator.onLine === false is reliable ("no network at all"); true only
+// means a network exists, so this warns about the clear case and leaves
+// flaky connections to the transfer's own retry messages.
+function watchConnectivity() {
+  const update = () => { $("offline").hidden = navigator.onLine !== false; };
+  addEventListener("online", update);
+  addEventListener("offline", update);
+  update();
+}
+watchConnectivity();
+
 // --- Routing -----------------------------------------------------------------
 
 const f = frag.decode();

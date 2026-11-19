@@ -462,6 +462,23 @@ tests["pwa"] = async (p) => {
 };
 tests["pwa"].always = true;
 
+tests["offline"] = async (p) => {
+  // The banner follows the browser's connectivity both ways.
+  const page = p.sender;
+  await page.goto(BASE);
+  await page.locator("#send-new").waitFor();
+  const banner = page.locator("#offline");
+  if (await banner.isVisible()) throw new Error("banner shown while online");
+  await page.context().setOffline(true);
+  try {
+    await banner.waitFor({ state: "visible", timeout: 5_000 });
+  } finally {
+    await page.context().setOffline(false);
+  }
+  await banner.waitFor({ state: "hidden", timeout: 5_000 });
+};
+tests["offline"].always = true;
+
 // Tests that run with a private receiver even where private mode has no
 // storage: they check that case, or don't receive at all.
 tests["stale-index"].always = true;
