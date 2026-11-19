@@ -114,6 +114,13 @@ footer.site a { color: inherit; }
 .hero { margin: 32px 0 20px; }
 .hero h1 { font-size: clamp(1.6rem, 5vw, 2.1rem); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 8px; text-wrap: balance; }
 .lede { margin: 0; color: var(--muted); font-size: 1.05rem; }
+/* Short facts separated by dots, wrapping whole facts. Every fact
+   starts with its dot; the list is shifted left by one dot's width and
+   that strip is clipped, which hides the dot of whichever fact starts a
+   line. */
+.facts { display: flex; flex-wrap: wrap; margin-left: -1.2em; clip-path: inset(0 0 0 1.2em); }
+.facts span { white-space: nowrap; }
+.facts span::before { content: "\00b7"; display: inline-block; width: 1.2em; text-align: center; }
 
 .card {
   background: var(--surface);
