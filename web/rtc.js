@@ -27,10 +27,14 @@ export function lockOutWebRTC() {
 
 export const isLockedOut = () => lockedOut;
 
-/** STUN servers from the DERP map: the relays double as STUN servers. */
+/**
+ * STUN servers from the DERP map: the relays double as STUN servers.
+ * Optional, so a slow or failing fetch gives up rather than hold up
+ * the transfer.
+ */
 export async function stunServers(derpMapURL, max = 2) {
   try {
-    const dm = await (await fetch(derpMapURL)).json();
+    const dm = await (await fetch(derpMapURL, { signal: AbortSignal.timeout(5000) })).json();
     const urls = [];
     for (const r of Object.values(dm.Regions || {})) {
       for (const n of r.Nodes || []) {
@@ -112,12 +116,11 @@ export async function connect({ localMode, effectiveMode, offerer, signal, iceSe
       console.warn("signaling error", err);
     }
   };
-  if (offerer) {
-    await pc.setLocalDescription();
-    signal.send({ t: "rtc", desc: pc.localDescription.toJSON() });
-  }
-
   try {
+    if (offerer) {
+      await pc.setLocalDescription();
+      signal.send({ t: "rtc", desc: pc.localDescription.toJSON() });
+    }
     const dc = await opened;
     cleanup();
     return { pc, dc };
