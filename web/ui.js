@@ -69,7 +69,7 @@ export function setBadge(el, via) {
   el.className = `badge ${via === "rtc" ? "direct" : "relay"}`;
   el.replaceChildren(icon(via === "rtc" ? "i-direct" : "i-relay"), document.createTextNode(via === "rtc" ? "Direct" : "Relayed"));
   el.title = via === "rtc"
-    ? "Connected directly between the two browsers."
+    ? "Connected directly between your devices."
     : "Going through the encrypted relay.";
 }
 

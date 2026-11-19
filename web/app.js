@@ -67,7 +67,7 @@ engine.onProgress((s) => {
           : `Preparing secure connection… ${Math.floor((100 * s.loaded) / s.total)}%`;
       break;
     case "retrying":
-      label.textContent = `Download failed. Retrying (attempt ${s.attempt})…`;
+      label.textContent = "Still getting ready. Trying again…";
       break;
     case "ready":
       status.dataset.state = "ready";
@@ -76,7 +76,8 @@ engine.onProgress((s) => {
       break;
     case "error":
       status.dataset.state = "error";
-      label.textContent = `Couldn't load: ${s.error}. Reload the page to try again.`;
+      console.warn("engine failed to load:", s.error);
+      label.textContent = "Couldn't get ready. Check your connection, then reopen fileporter.";
       break;
   }
 });
@@ -271,7 +272,7 @@ async function startSender(state, file) {
 function senderStartFailed(err, errorId) {
   if ($("send-active").hidden) { setText(errorId, err.message); return false; }
   setGuard(false);
-  setText("send-active-status", `Couldn't start sending: ${err.message}. Reload the page to try again.`);
+  setText("send-active-status", `Couldn't start sending: ${err.message}. Reopen fileporter to try again.`);
   return true;
 }
 
@@ -317,7 +318,7 @@ function senderResume(state) {
     const file = $("send-resume-file").files[0];
     if (!file) return;
     if (!frag.sameFile(state.f, await frag.fileFingerprint(file))) {
-      setText("send-resume-error", "That's not the same file. Its name, size or last-modified date is different.");
+      setText("send-resume-error", "That's not the same file. Choose the one you were sending.");
       return;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
@@ -352,7 +353,7 @@ async function receiverLoop(state) {
     if (attempt) {
       const wait = Math.min(5, attempt);
       for (let s = wait; s > 0 && !recvStopped; s--) {
-        setText("recv-active-status", `Connection lost. Trying again in ${s} s. The sender needs to keep their page open.`);
+        setText("recv-active-status", `Connection lost. Trying again in ${s} s. The sender needs to keep fileporter open.`);
         await sleep(1000);
       }
       if (recvStopped) return;
@@ -420,6 +421,7 @@ async function receiverLoop(state) {
 }
 
 $("recv-retry").onclick = () => location.reload();
+$("busy-retry").onclick = () => location.reload();
 
 $("recv-cancel").onclick = async () => {
   $("recv-cancel").disabled = true;
@@ -429,7 +431,7 @@ $("recv-cancel").onclick = async () => {
   if (f) await storage.remove(f.state.id).catch(() => {});
   setGuard(false);
   frag.scrub();
-  setText("cancelled-text", "You cancelled the transfer, and the partly downloaded file was deleted.");
+  setText("cancelled-text", "You cancelled the transfer, and the partly received file was deleted.");
   show("cancelled");
 };
 
@@ -466,7 +468,7 @@ function showSave(state, meta) {
       setText("recv-save-status", "Saving…");
       const w = await handle.createWritable();
       await data.stream().pipeTo(w);
-      await clearReceived(state, "Saved. The temporary copy was removed from this browser.");
+      await clearReceived(state, "Saved. fileporter's temporary copy was removed.");
     } else {
       // Firefox, Safari: a regular download, through the download
       // worker, which says when the browser has read all of it.
@@ -490,10 +492,10 @@ function showSave(state, meta) {
       a.click();
       a.remove();
       $("recv-clear").hidden = false;
-      setText("recv-save-status", "When the download has finished, remove the temporary copy.");
+      setText("recv-save-status", "When the file has finished saving, remove fileporter's temporary copy.");
     }
   };
-  $("recv-clear").onclick = () => clearReceived(state, "The temporary copy was removed from this browser.");
+  $("recv-clear").onclick = () => clearReceived(state, "fileporter's temporary copy was removed.");
 }
 
 async function clearReceived(state, message) {
@@ -511,7 +513,7 @@ async function receiver(state) {
     const btn = $("unsupported-copy");
     btn.hidden = false;
     copyButton(btn, location.href, () => {
-      btn.querySelector("span").textContent = "Couldn't copy. Use the address bar.";
+      btn.querySelector("span").textContent = "Couldn't copy the link";
       btn.disabled = true;
     });
     show("unsupported");
@@ -519,9 +521,9 @@ async function receiver(state) {
   }
   if (!(await storage.lock(state.id))) { show("busy"); return; }
   startSweeping(state.id);
+  dl.prepare(); // active by the time the file is saved
 
   // Already received in an earlier visit (reload on the save step):
-  dl.prepare(); // active by the time the file is saved
   // straight to saving, no network needed.
   const existing = await storage.peek(state.id);
   if (existing.exists && existing.meta?.status === "complete") {

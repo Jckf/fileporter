@@ -42,10 +42,10 @@ export const effectiveMode = (a, b) => (a === "privacy" || b === "privacy" ? "pr
 export class FatalError extends Error {}
 /** The other side cancelled the transfer. */
 export class CancelledError extends FatalError {}
-/** The receiver's browser storage is full. Freeing space and retrying resumes. */
+/** The receiver's storage is full. Freeing space and retrying resumes. */
 export class NoSpaceError extends FatalError {}
 
-const NOSPACE_SENDER = "The recipient's browser doesn't have enough storage space for this file. The transfer continues once they free up some space and reload their page.";
+const NOSPACE_SENDER = "The recipient's device doesn't have enough storage space for this file. The transfer continues once they free up some space and try again.";
 const isQuotaError = (err) => err?.name === "QuotaExceededError";
 
 const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -184,7 +184,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
     onStatus({ phase: "verifying" });
     await transport.send({ t: "done", root: await hashes.root(n) });
     await until(() => complete);
-    if (!complete.ok) throw new FatalError("The recipient's copy didn't match the original, so it was discarded. Ask them to try again.");
+    if (!complete.ok) throw new FatalError("The file didn't reach the recipient intact, so it was discarded. Ask them to try again.");
     return { via: transport.via };
   } finally {
     ctl.stop = ctl.cancel = null;
@@ -217,9 +217,9 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
   };
   try {
     const hello = await link.next("hello");
-    if (hello.v !== PROTOCOL_VERSION) throw new FatalError("The sender is using a different version of fileporter. Ask them to reload their page and send you a new link.");
+    if (hello.v !== PROTOCOL_VERSION) throw new FatalError("The sender is using a different version of fileporter. Ask them to open fileporter again and send you a new link.");
     if (hello.id !== state.id) throw new FatalError("This link is for a different transfer. Ask the sender for a new link.");
-    if (hello.chunkSize !== CHUNK || !Number.isSafeInteger(hello.size) || hello.size < 0) throw new FatalError("The sender's page sent invalid file details. Ask them for a new link.");
+    if (hello.chunkSize !== CHUNK || !Number.isSafeInteger(hello.size) || hello.size < 0) throw new FatalError("Something went wrong with the sender's file details. Ask them for a new link.");
 
     const info = { name: String(hello.name || "download"), size: hello.size, type: String(hello.type || ""), chunkSize: CHUNK };
     const st = await storage.open(state.id, info);
@@ -227,7 +227,7 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
     const { usage, quota } = await storage.estimate();
     const need = hello.size - st.chunks * CHUNK;
     if (quota && quota - usage < need) {
-      throw new NoSpaceError(`This browser doesn't have enough storage space for this file (it needs ${fmtBytes(need)}; ${fmtBytes(quota - usage)} is available). Free up some space, then try again.`);
+      throw new NoSpaceError(`This device doesn't have enough storage space for this file (it needs ${fmtBytes(need)}; ${fmtBytes(quota - usage)} is available). Free up some space, then try again.`);
     }
     onStatus({ phase: "hello", hello });
 
@@ -283,7 +283,7 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
       await storage.reset(state.id);
       await transport.send({ t: "complete", ok, root }).catch(() => {});
       await end();
-      throw new FatalError("The file didn't match the original, so it was discarded. Try again to download it again.");
+      throw new FatalError("The file didn't arrive intact, so it was discarded. Try again to receive it once more.");
     }
     // Mark complete before telling the sender, so a crash in between
     // can't leave us without the file while the sender thinks it's done.
@@ -301,7 +301,7 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
       await end();
     } catch {}
     throw err instanceof NoSpaceError ? err
-      : new NoSpaceError("This browser ran out of storage space. Free up some space, then try again to continue where you left off.");
+      : new NoSpaceError("This device ran out of storage space. Free up some space, then try again to continue where you left off.");
   } finally {
     ctl.stop = ctl.cancel = null;
     if (transport !== link) transport.shutdown();

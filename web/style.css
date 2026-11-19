@@ -195,10 +195,13 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   transition: border-color .15s, background-color .15s;
 }
 .dropzone-label strong { color: var(--fg); }
+.dropzone-label strong.link-like { color: var(--accent); }
 .dropzone-label .icon { color: var(--accent); }
 .dropzone-label:hover, .dropzone.over .dropzone-label { border-color: var(--accent); background: var(--accent-soft); }
 .dropzone input:focus-visible + .dropzone-label { outline: 2px solid var(--focus); outline-offset: 2px; }
 .link-like { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+/* Touch screens have nothing to drag files from. */
+@media (pointer: coarse) { .drop-hint { display: none; } }
 
 .file-card {
   display: flex; align-items: center; gap: 14px;

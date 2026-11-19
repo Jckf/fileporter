@@ -36,12 +36,12 @@
     let last = 0;
     try { last = Number(sessionStorage.getItem(KEY)) || 0; } catch {}
     if (Date.now() - last < 60_000) {
-      message("fileporter couldn't load. Check your connection and reload the page.");
+      message("fileporter couldn't load. Check your connection and open it again.");
       return;
     }
     try { sessionStorage.setItem(KEY, String(Date.now())); } catch {
       // Without sessionStorage we can't tell a retry from a loop.
-      message("fileporter couldn't load. Reload the page to try again.");
+      message("fileporter couldn't load. Reopen it to try again.");
       return;
     }
     fetch(location.href, { cache: "reload" })

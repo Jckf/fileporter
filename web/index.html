@@ -14,7 +14,7 @@
        connect-src needs https: for the DERP map and wss: for the relays;
        'wasm-unsafe-eval' lets WebAssembly compile without allowing eval. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' https: wss:; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <meta name="description" content="Send files straight from your browser to someone else's. End-to-end encrypted, nothing stored on a server.">
+  <meta name="description" content="Send files straight to someone else's device. End-to-end encrypted, nothing stored on a server.">
   <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0e1114" media="(prefers-color-scheme: dark)">
   <title>fileporter</title>
@@ -74,8 +74,8 @@
     <!-- Sender: new session -->
     <section id="send-new" hidden>
       <div class="hero">
-        <h1>Send files straight to someone's browser.</h1>
-        <p class="lede">End-to-end encrypted. Nothing is stored on a server.</p>
+        <h1>Send files straight to someone's device.</h1>
+        <p class="lede">End-to-end encrypted, never stored on a server, no sign-up.</p>
       </div>
       <div class="card">
         <ol class="steps" data-flow="send" data-current="0" aria-label="Progress"></ol>
@@ -84,7 +84,7 @@
           <input type="file" id="send-file" class="visually-hidden">
           <label for="send-file" class="dropzone-label">
             <svg class="icon icon-lg"><use href="#i-upload"/></svg>
-            <span><strong>Drop a file here</strong> or <span class="link-like">browse</span></span>
+            <span><strong class="link-like">Choose a file</strong><span class="drop-hint"> or drop it here</span></span>
           </label>
         </div>
         <div id="send-file-card" class="file-card" hidden>
@@ -100,18 +100,18 @@
             <label class="mode">
               <input type="radio" name="send-mode" value="privacy">
               <span class="mode-icon"><svg class="icon"><use href="#i-shield"/></svg></span>
-              <span class="mode-text"><strong>Private</strong><span>Goes through a relay. The recipient never sees your IP address.</span></span>
+              <span class="mode-text"><strong>Private</strong><span>Your IP address stays hidden from the recipient.</span></span>
             </label>
             <label class="mode">
               <input type="radio" name="send-mode" value="performance">
               <span class="mode-icon"><svg class="icon"><use href="#i-bolt"/></svg></span>
-              <span class="mode-text"><strong>Fast</strong><span>Connects directly when possible. The recipient can see your IP address.</span></span>
+              <span class="mode-text"><strong>Fast</strong><span>A direct connection, much quicker. The recipient can see your IP address.</span></span>
             </label>
           </div>
           <details class="explain">
             <summary>What's the difference?</summary>
-            <p><strong>Private</strong> sends everything through a relay, so neither of you sees the other's IP address. The relay only passes along encrypted data it can't read, though like any server it sees your IP address. It's slower.</p>
-            <p><strong>Fast</strong> connects your browsers directly when the network allows it. It's much quicker, but each of you can see the other's IP address. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
+            <p><strong>Private</strong> passes everything through a relay server, so neither of you sees the other's IP address. The relay only forwards encrypted data and can't read your file. It's slower.</p>
+            <p><strong>Fast</strong> connects your devices directly when the network allows it. It's much quicker, but you can see each other's IP addresses. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
           </details>
         </fieldset>
 
@@ -129,7 +129,7 @@
       <div class="card">
         <ol class="steps" data-flow="send" data-current="2" aria-label="Progress"></ol>
         <h2>Resume sending</h2>
-        <p>Browsers don't let pages keep access to your files, so choose the file again to continue. <span class="muted">Connection: <strong id="send-resume-mode"></strong></span></p>
+        <p>fileporter doesn't keep access to your files, so choose the file again to continue. <span class="muted">Connection: <strong id="send-resume-mode"></strong></span></p>
         <div class="dropzone">
           <input type="file" id="send-resume-file" class="visually-hidden">
           <label for="send-resume-file" class="dropzone-label">
@@ -164,7 +164,7 @@
             <div id="qr" class="qr"></div>
             <p class="muted small">Scan it with the recipient's phone.</p>
           </div>
-          <p class="note"><svg class="icon"><use href="#i-lock"/></svg>Anyone with this link can download the file while this page is open, so only share it with the recipient.</p>
+          <p class="note"><svg class="icon"><use href="#i-lock"/></svg>Anyone with this link can get the file while you have fileporter open, so only share it with the recipient.</p>
         </div>
 
         <div class="transfer" id="send-transfer" data-phase="waiting">
@@ -175,7 +175,7 @@
           <div class="bar"><progress id="send-progress" max="1" value="0"></progress></div>
           <p id="send-progress-text" class="muted small"></p>
           <p id="send-active-effective" class="muted small"></p>
-          <p class="muted small">Keep this page open until the transfer is done. Reloading it won't lose progress.</p>
+          <p class="muted small">Keep fileporter open until the transfer is done. If the connection drops, it picks up where it left off.</p>
         </div>
         <button id="send-cancel" class="ghost danger"><svg class="icon"><use href="#i-x"/></svg>Cancel transfer</button>
       </div>
@@ -195,7 +195,7 @@
     <section id="recv-choose" hidden>
       <div class="hero">
         <h1>Someone is sending you a file.</h1>
-        <p class="lede">It comes straight from their browser, end-to-end encrypted.</p>
+        <p class="lede">It comes straight from their device, end-to-end encrypted and never stored on a server.</p>
       </div>
       <div class="card">
         <ol class="steps" data-flow="recv" data-current="0" aria-label="Progress"></ol>
@@ -205,18 +205,18 @@
             <label class="mode">
               <input type="radio" name="recv-mode" value="privacy">
               <span class="mode-icon"><svg class="icon"><use href="#i-shield"/></svg></span>
-              <span class="mode-text"><strong>Private</strong><span>Goes through a relay. The sender never sees your IP address.</span></span>
+              <span class="mode-text"><strong>Private</strong><span>Your IP address stays hidden from the sender.</span></span>
             </label>
             <label class="mode">
               <input type="radio" name="recv-mode" value="performance">
               <span class="mode-icon"><svg class="icon"><use href="#i-bolt"/></svg></span>
-              <span class="mode-text"><strong>Fast</strong><span>Connects directly when possible. The sender can see your IP address.</span></span>
+              <span class="mode-text"><strong>Fast</strong><span>A direct connection, much quicker. The sender can see your IP address.</span></span>
             </label>
           </div>
           <details class="explain">
             <summary>What's the difference?</summary>
-            <p><strong>Private</strong> sends everything through a relay, so neither of you sees the other's IP address. The relay only passes along encrypted data it can't read, though like any server it sees your IP address. It's slower.</p>
-            <p><strong>Fast</strong> connects your browsers directly when the network allows it. It's much quicker, but each of you can see the other's IP address. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
+            <p><strong>Private</strong> passes everything through a relay server, so neither of you sees the other's IP address. The relay only forwards encrypted data and can't read your file. It's slower.</p>
+            <p><strong>Fast</strong> connects your devices directly when the network allows it. It's much quicker, but you can see each other's IP addresses. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
           </details>
         </fieldset>
         <button id="recv-continue" class="primary block" disabled>Continue</button>
@@ -239,7 +239,7 @@
           <div class="bar"><progress id="recv-progress" max="1" value="0"></progress></div>
           <p id="recv-progress-text" class="muted small"></p>
           <p id="recv-active-effective" class="muted small"></p>
-          <p class="muted small">Reloading this page won't lose progress.</p>
+          <p class="muted small">If the connection drops, it picks up where it left off.</p>
         </div>
         <div class="row-buttons">
           <button id="recv-retry" class="primary" hidden><svg class="icon"><use href="#i-refresh"/></svg>Try again</button>
@@ -254,7 +254,7 @@
         <ol class="steps" data-flow="recv" data-current="2" aria-label="Progress"></ol>
         <div class="big-icon ok"><svg class="icon"><use href="#i-check"/></svg></div>
         <h2>File received</h2>
-        <p><span id="recv-save-file"></span> arrived and was verified. It's kept in this browser until you save it.</p>
+        <p><span id="recv-save-file"></span> arrived and was verified. It's kept on this device until you save it.</p>
         <div class="row-buttons center">
           <button id="recv-save-btn" class="primary"><svg class="icon"><use href="#i-download"/></svg>Save file</button>
           <button id="recv-clear" class="secondary" hidden>Remove temporary copy</button>
@@ -286,15 +286,16 @@
       <div class="card center">
         <div class="big-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
         <h2>Already open</h2>
-        <p>This transfer is open in another tab or window. Continue there, or close it and reload this page.</p>
+        <p>This transfer is already open elsewhere on this device. Continue there, or close it and try again.</p>
+        <button id="busy-retry" class="button secondary"><svg class="icon"><use href="#i-refresh"/></svg>Try again</button>
       </div>
     </section>
 
     <section id="unsupported" hidden>
       <div class="card center">
         <div class="big-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
-        <h2>Browser not supported</h2>
-        <p>Receiving files needs an up-to-date Chrome, Edge, Opera, Firefox or Safari. Some private and incognito windows block the storage this needs, so if you're in one, open the link in a normal window.</p>
+        <h2>Can't receive files here</h2>
+        <p>There's no room here to store the file while it arrives. Private and incognito windows often block this. Open the link somewhere else, such as a normal window or another device.</p>
         <button id="unsupported-copy" class="button primary" hidden><svg class="icon"><use href="#i-copy"/></svg><span>Copy link</span></button>
       </div>
     </section>

@@ -1,7 +1,7 @@
 {
   "name": "fileporter",
   "short_name": "fileporter",
-  "description": "Send files straight from your browser to someone else's. End-to-end encrypted, nothing stored on a server.",
+  "description": "Send files straight to someone else's device. End-to-end encrypted, nothing stored on a server.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
