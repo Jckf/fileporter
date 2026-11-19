@@ -247,6 +247,18 @@ async function startSender(state, file) {
   setText("send-active-status", "Waiting for the recipient to open the link…");
 }
 
+/**
+ * Reports a failed startSender. Before it shows the transfer screen,
+ * the error goes next to the control that started it (errorId); after,
+ * that control is hidden, so it goes in the transfer's status line.
+ */
+function senderStartFailed(err, errorId) {
+  if ($("send-active").hidden) { setText(errorId, err.message); return false; }
+  guardLeave = false;
+  setText("send-active-status", `Couldn't start sending: ${err.message}. Reload the page to try again.`);
+  return true;
+}
+
 $("send-start").onclick = async () => {
   const file = $("send-file").files[0];
   const mode = pickedMode("send-mode");
@@ -264,8 +276,10 @@ $("send-start").onclick = async () => {
     frag.set("s", state);
     await startSender(state, file);
   } catch (err) {
-    setText("send-error", `Couldn't create the link: ${err.message}`);
-    updateStartButton();
+    if (!senderStartFailed(err, "send-error")) {
+      setText("send-error", `Couldn't create the link: ${err.message}`);
+      updateStartButton();
+    }
   }
 };
 
@@ -291,7 +305,7 @@ function senderResume(state) {
       return;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
-    whenReady(() => startSender(state, file).catch((err) => setText("send-resume-error", err.message)));
+    whenReady(() => startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")));
   };
 }
 
