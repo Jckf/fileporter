@@ -101,14 +101,22 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ matrix.browser }}-${{ hashFiles('test/package-lock.json') }}
+      # Retried: the Ubuntu package mirrors are sometimes unreachable
+      # from the runners for a minute or two.
       - name: Install browser
         working-directory: test
         run: |
           if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then
-            npx playwright install-deps ${{ matrix.browser }}
+            install="npx playwright install-deps ${{ matrix.browser }}"
           else
-            npx playwright install --with-deps ${{ matrix.browser }}
+            install="npx playwright install --with-deps ${{ matrix.browser }}"
           fi
+          for attempt in 1 2 3; do
+            $install && exit 0
+            echo "::warning::browser install failed (attempt $attempt)"
+            sleep 30
+          done
+          exit 1
       - name: Run e2e tests
         working-directory: test
         run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
