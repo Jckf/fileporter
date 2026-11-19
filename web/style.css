@@ -173,8 +173,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .secondary:hover:not(:disabled) { background: var(--surface-2); }
 .ghost { background: transparent; color: var(--fg); border-color: var(--border); padding: 8px 12px; font-size: 0.875rem; }
 .ghost:hover, .ghost[aria-expanded="true"] { background: var(--surface-2); }
-.text-button { background: none; border: none; color: var(--muted); padding: 8px 0; font-weight: 500; font-size: 0.9rem; }
-.text-button:hover:not(:disabled) { color: var(--error); }
+.danger { color: var(--error); }
+.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--error) 10%, transparent); border-color: color-mix(in srgb, var(--error) 40%, transparent); }
 .icon-button { background: none; border: none; color: var(--muted); padding: 6px; border-radius: 8px; }
 .icon-button:hover { background: var(--surface-2); color: var(--fg); }
 .block { width: 100%; margin-top: 20px; padding: 14px 18px; font-size: 1rem; }
