@@ -337,6 +337,10 @@ func makePromise(f func() (any, error)) js.Value {
 		}()
 		return nil
 	})
+	// The Promise constructor calls handler synchronously, so it can be
+	// released right away. Otherwise every call (one per 64 KiB read
+	// during a transfer) would leave a js.Func registered for good.
+	defer handler.Release()
 	return js.Global().Get("Promise").New(handler)
 }
 
