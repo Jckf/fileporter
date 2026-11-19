@@ -28,9 +28,12 @@ on:
 permissions:
   contents: read
 
+# One run at a time, each run to completion: cancelling could stop a
+# deploy halfway. A push during a run waits (only the latest waiting
+# run is kept, so rapid pushes don't pile up).
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
