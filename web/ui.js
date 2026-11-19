@@ -91,7 +91,14 @@ export function progressView(barId, textId, total) {
   bar.max = total || 1;
   return (bytes) => {
     const now = performance.now();
-    samples.push([now, bytes]);
+    const last = samples.at(-1);
+    // After a long pause (waiting, reconnecting) or a rewind, start over:
+    // old samples would drag the rate down.
+    if (last && (bytes < last[1] || now - last[0] > 15000)) samples.length = 0;
+    // Until bytes start moving, keep only the latest sample, so setup
+    // time (negotiating, picking a transport) isn't counted as slowness.
+    if (samples.length === 1 && samples[0][1] === bytes) samples[0][0] = now;
+    else samples.push([now, bytes]);
     while (samples.length > 2 && now - samples[0][0] > 5000) samples.shift();
     const [t0, b0] = samples[0];
     const rate = now - t0 > 500 ? ((bytes - b0) * 1000) / (now - t0) : 0;
