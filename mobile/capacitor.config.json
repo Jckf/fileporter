@@ -1,0 +1,16 @@
+{
+  "appId": "app.fileporter",
+  "appName": "fileporter",
+  "webDir": "www",
+  "server": {
+    "hostname": "fileporter.app",
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 0,
+      "backgroundColor": "#0b7a69"
+    }
+  }
+}

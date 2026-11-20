@@ -1,0 +1,4 @@
+node_modules/
+# The built site, copied in by mobile/build.
+www/
+smoke-out/
