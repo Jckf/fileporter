@@ -12,6 +12,20 @@ short:
 - **Keeping the screen on** during a transfer: `@capacitor-community/keep-awake`.
 - **Opening fileporter links** in the app: `@capacitor/app` plus App
   Links / Universal Links (below).
+- **Files to send**: `plugins/files`. On Android the system file
+  picker, with access kept across restarts, so an interrupted send
+  carries on by itself (the app also remembers its current session,
+  `web/fragment.js`). iOS keeps the web view's own picker, which unlike
+  the document picker offers the photo library and camera. Files shared
+  to fileporter from other apps (Android share sheet, iOS "Open in")
+  land on the start page. The page reads them in byte ranges
+  (`web/nativefile.js`).
+- **Scanning** the sender's QR code to receive: in the page
+  (`web/scan.js`: the camera and the vendored jsQR). Not a native
+  scanner plugin: those bundle Google's ML Kit, which is proprietary,
+  reports usage to Google and adds 30 MB.
+- **"Transfer paused"** when the app goes to the background mid-transfer:
+  `@capacitor/local-notifications`.
 
 The app loads its bundled copy from `https://fileporter.app/` (Android)
 or `capacitor://localhost` (iOS); share links always point at the
