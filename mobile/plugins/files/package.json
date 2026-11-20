@@ -1,0 +1,25 @@
+{
+  "name": "@fileporter/files",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pick files to send, keep access to them across restarts, and receive files shared from other apps (Android share sheet, iOS \"Open in\").",
+  "license": "AGPL-3.0-or-later",
+  "author": "Jim C K Flaten",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "ios/Sources",
+    "Package.swift"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  }
+}

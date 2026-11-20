@@ -12,6 +12,9 @@ const cap = globalThis.Capacitor;
 /** True inside the Android or iOS app. */
 export const isApp = !!cap?.isNativePlatform?.();
 
+/** "android", "ios" or "web". */
+export const os = isApp ? cap.getPlatform?.() || "web" : "web";
+
 /** A native plugin by name, or null (in a browser, or not installed). */
 export const plugin = (name) => (isApp && cap.isPluginAvailable?.(name) ? cap.Plugins[name] : null);
 

@@ -16,6 +16,7 @@ import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
 import * as savefile from "./savefile.js";
+import * as nativefile from "./nativefile.js";
 import * as platform from "./platform.js";
 
 const $ = (id) => document.getElementById(id);
@@ -110,8 +111,17 @@ let listener = null;
 let currentCtl = null;
 let delivered = false;
 
+// In the app, a file picked through (or shared to) its Files plugin
+// stands in for the input's.
+let nativeChosen = null;
+const chosenFile = () => nativeChosen ?? $("send-file").files[0];
+function choose(file) {
+  nativeChosen = file;
+  showPickedFile();
+}
+
 function updateStartButton() {
-  const file = $("send-file").files[0];
+  const file = chosenFile();
   const mode = pickedMode("send-mode");
   const btn = $("send-start");
   btn.disabled = !(file && mode && engineReady);
@@ -119,7 +129,7 @@ function updateStartButton() {
 }
 
 function showPickedFile() {
-  const file = $("send-file").files[0];
+  const file = chosenFile();
   setText("drop-error", "");
   $("dropzone").hidden = !!file;
   $("send-file-card").hidden = !file;
@@ -127,13 +137,34 @@ function showPickedFile() {
   updateStartButton();
 }
 
-$("send-file").onchange = showPickedFile;
+$("send-file").onchange = () => choose(null);
 $("send-file-clear").onclick = () => {
   $("send-file").value = "";
+  nativeChosen = null;
   showPickedFile();
   $("send-file").focus();
 };
 for (const r of document.querySelectorAll('input[name="send-mode"]')) r.onchange = updateStartButton;
+
+// The app picks through its plugin instead of the web view's picker: it
+// keeps access to the file, so an interrupted send carries on without
+// asking for it again.
+function nativePicker(input, onFile, errorId) {
+  input.addEventListener("click", async (e) => {
+    e.preventDefault();
+    try {
+      const file = await nativefile.pick();
+      if (file) onFile(file);
+    } catch (err) {
+      setText(errorId, err.message);
+    }
+  });
+}
+let resumeWith = null; // set by senderResume
+if (nativefile.picks()) {
+  nativePicker($("send-file"), choose, "drop-error");
+  nativePicker($("send-resume-file"), (file) => resumeWith?.(file), "send-resume-error");
+}
 whenReady(updateStartButton);
 
 ui.setupDrop({
@@ -246,6 +277,7 @@ async function startSender(state, file) {
         setGuard(false);
         listener.close();
         frag.scrub();
+        nativefile.retain(null);
         setText("send-done-file", `${file.name} (${fmtBytes(file.size)})`);
         show("send-done");
         ui.setStep("send-done", 3);
@@ -256,6 +288,7 @@ async function startSender(state, file) {
           setGuard(false);
           listener.close();
           frag.scrub();
+          nativefile.retain(null);
           setText("cancelled-text", err.message);
           show("cancelled");
         } else if (err instanceof FatalError) {
@@ -283,7 +316,7 @@ function senderStartFailed(err, errorId) {
 }
 
 $("send-start").onclick = async () => {
-  const file = $("send-file").files[0];
+  const file = chosenFile();
   const mode = pickedMode("send-mode");
   if (!file || !mode) return;
   $("send-start").disabled = true;
@@ -295,7 +328,10 @@ $("send-start").onclick = async () => {
       id: frag.newTransferId(),
       sk: s.senderKey, a: s.addr, rk: s.receiverKey, rp: s.receiverPub,
       m: mode, f: await frag.fileFingerprint(file),
+      // The app's handle on the file, to send it again after a restart.
+      ...(file.persistent ? { u: file.uri } : {}),
     };
+    nativefile.retain(file.persistent ? file.uri : null);
     frag.set("s", state);
     await startSender(state, file);
   } catch (err) {
@@ -312,24 +348,32 @@ $("send-cancel").onclick = async () => {
   listener?.close();
   setGuard(false);
   frag.scrub();
+  nativefile.retain(null);
   setText("cancelled-text", "You cancelled the transfer.");
   show("cancelled");
 };
 
-function senderResume(state) {
+async function senderResume(state) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
-  show("send-resume");
-  setText("send-resume-mode", modeName(state.m));
-  $("send-resume-file").onchange = async () => {
-    const file = $("send-resume-file").files[0];
-    if (!file) return;
+  resumeWith = async (file) => {
     if (!frag.sameFile(state.f, await frag.fileFingerprint(file))) {
       setText("send-resume-error", "That's not the same file. Choose the one you were sending.");
-      return;
+      return false;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     whenReady(() => startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")));
+    return true;
   };
+  $("send-resume-file").onchange = () => {
+    const file = $("send-resume-file").files[0];
+    if (file) resumeWith(file);
+  };
+  // The app still has the file: carry on without asking for it.
+  const kept = state.u && nativefile.available() ? await nativefile.open(state.u) : null;
+  if (kept && (await resumeWith(kept))) return;
+  setText("send-resume-error", "");
+  show("send-resume");
+  setText("send-resume-mode", modeName(state.m));
 }
 
 // --- Receiver ----------------------------------------------------------------
@@ -590,11 +634,28 @@ watchConnectivity();
 
 // In the app, a tapped fileporter link arrives as a launch URL, or as an
 // event while the app runs; either way its fragment becomes ours.
+// A file shared to the app from another app starts a new send (and a
+// shared fileporter link opens).
+let shared = null;
 if (platform.isApp) {
   platform.onLinkOpened((hash) => { location.hash = hash; }); // hashchange reloads
-  // Only when the app starts: opened on a link, else carrying on where
-  // it was closed. (Later loads at the start page mean "start over".)
-  if (frag.freshStart() && !location.hash) {
+  nativefile.onShared(() => {
+    if (guardLeave && !confirm("Stop this transfer and send the shared file instead?")) {
+      nativefile.takeShared(); // declined: don't pick it up later
+      return;
+    }
+    setGuard(false);
+    location.href = "./"; // picked up below, on the start page
+  });
+  const fresh = frag.freshStart();
+  shared = await nativefile.takeShared();
+  if (shared?.link) {
+    history.replaceState(null, "", shared.link);
+  } else if (shared) {
+    history.replaceState(null, "", location.pathname + location.search);
+  } else if (fresh && !location.hash) {
+    // Only when the app starts: opened on a link, else carrying on where
+    // it was closed. (Later loads at the start page mean "start over".)
     const hash = (await platform.launchFragment()) || frag.remembered();
     if (hash) history.replaceState(null, "", hash);
   }
@@ -604,7 +665,8 @@ const f = frag.decode();
 frag.remember(f ? location.hash : "");
 if (!location.hash) {
   show("send-new");
-  showPickedFile();
+  choose(shared?.file ?? null);
+  if (shared?.error) setText("drop-error", shared.error);
   startSweeping(null);
 } else if (!f) {
   show("bad-link");

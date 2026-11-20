@@ -27,6 +27,16 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="fileporter.app" android:path="/" />
             </intent-filter>
+
+            <!-- "Share to fileporter": any file sends it (several get a
+                 "zip them first"); shared text opens a fileporter link
+                 in it. See plugins/files. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
         <provider
@@ -36,6 +46,7 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
     </application>
 
     <!-- Permissions -->
