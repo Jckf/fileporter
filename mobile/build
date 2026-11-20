@@ -17,6 +17,7 @@ sync() {
   (cd .. && go run ./cmd/build -o mobile/www)
   # Reinstall when the lockfile changed since the last install.
   [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund
+  node licenses.mjs
   npx cap sync
 }
 assets() {

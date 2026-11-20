@@ -1,0 +1,6 @@
+Android libraries from Google's Maven repository (androidx.activity,
+androidx.appcompat, androidx.coordinatorlayout, androidx.core,
+androidx.core:core-splashscreen, androidx.fragment, androidx.webkit and
+their AndroidX dependencies), copyright The Android Open Source Project,
+and the Apache Cordova Android framework (org.apache.cordova:framework),
+copyright The Apache Software Foundation: Apache License 2.0, below.
