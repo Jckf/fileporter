@@ -17,6 +17,7 @@ import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
 import * as savefile from "./savefile.js";
 import * as nativefile from "./nativefile.js";
+import * as notify from "./notify.js";
 import * as scan from "./scan.js";
 import * as platform from "./platform.js";
 
@@ -40,6 +41,7 @@ let guardLeave = false;
 function setGuard(on) {
   guardLeave = on;
   keepAwake(on);
+  notify.transferring(on); // the app: "Transfer paused" if put in the background
 }
 window.addEventListener("beforeunload", (e) => {
   if (guardLeave) { e.preventDefault(); e.returnValue = ""; }
