@@ -8,6 +8,7 @@
 #
 #   mobile/run <command…>            e.g. mobile/run mobile/build android
 #   FP_IMAGE=emulator mobile/run …   the image with the Android emulator
+#   FP_NAME=name mobile/run …        names the container (for docker exec)
 #
 # Images are built on first use (and when the Dockerfile changes).
 set -eu
@@ -21,7 +22,8 @@ mkdir -p "$cache/home" "$cache/go" "$cache/gradle" "$cache/npm"
 tty=; [ -t 0 ] && tty=-it
 # --device /dev/kvm: the emulator needs hardware acceleration.
 kvm=; [ -e /dev/kvm ] && kvm="--device /dev/kvm"
-exec docker run --rm $tty $kvm --network host \
+name=; [ -n "${FP_NAME:-}" ] && name="--name $FP_NAME"
+exec docker run --rm $tty $kvm $name --network host \
   -u "$(id -u):$(id -g)" \
   -e HOME=/home/builder -e ANDROID_USER_HOME=/home/builder/.android -e GOPATH=/cache/go -e GOCACHE=/cache/go/build \
   -e GRADLE_USER_HOME=/cache/gradle -e npm_config_cache=/cache/npm \

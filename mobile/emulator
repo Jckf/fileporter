@@ -1,0 +1,45 @@
+#!/bin/sh
+# Copyright (c) 2026 Jim C K Flaten
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Boots a headless Android emulator (wiped: a fresh device each time)
+# and installs the debug APK, then prints "ready". Runs in the emulator
+# image, after mobile/build android:
+#
+#   FP_IMAGE=emulator mobile/run mobile/emulator [command…]
+#
+# With a command, runs it once the device is ready and exits with its
+# status (mobile/smoke does this). Without, keeps the emulator up until
+# the container is stopped, for tests driving it from outside (with
+# docker exec … adb; test/android.test.js).
+set -eu
+out=${FP_OUT:-mobile/smoke-out}
+apk=mobile/android/app/build/outputs/apk/debug/app-debug.apk
+mkdir -p "$out"
+
+# Its own adb server port: containers share the host network, so the
+# default (5037) could be a host adb server or another run.
+export ANDROID_ADB_SERVER_PORT=${ANDROID_ADB_SERVER_PORT:-5137}
+
+avd=fileporter
+if ! avdmanager list avd -c | grep -qx "$avd"; then
+  echo no | avdmanager create avd -n "$avd" -k "system-images;android-36;google_apis;x86_64" -d pixel_7 >/dev/null
+fi
+# Locks left by an emulator whose container was killed. (One emulator
+# per cache: don't run two of these at once.)
+rm -rf "$ANDROID_USER_HOME/avd/$avd.avd/"*.lock
+emulator -avd "$avd" -no-metrics -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect >"$out/emulator.log" 2>&1 &
+emu=$!
+trap 'adb emu kill >/dev/null 2>&1 || kill $emu 2>/dev/null; wait $emu 2>/dev/null || true' EXIT INT TERM
+
+# Fail fast if the emulator dies, rather than waiting for it forever.
+alive() { kill -0 $emu 2>/dev/null || { echo "emulator exited:" >&2; tail -20 "$out/emulator.log" >&2; exit 1; }; }
+until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do alive; sleep 2; done
+adb install -r -g "$apk" >/dev/null
+echo ready
+
+if [ $# -gt 0 ]; then
+  "$@"
+else
+  wait $emu
+fi

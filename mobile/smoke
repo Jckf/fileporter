@@ -2,37 +2,18 @@
 # Copyright (c) 2026 Jim C K Flaten
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Boots a headless Android emulator, installs the debug APK, opens the
-# app (optionally on a link) and saves screenshots. Run it in the
-# emulator image, after mobile/build android:
+# Opens the app on a fresh emulator (optionally on a link) and saves a
+# screenshot and the app's log. Run it after mobile/build android:
 #
-#   FP_IMAGE=emulator mobile/run mobile/smoke [out-dir] [link]
+#   FP_IMAGE=emulator mobile/run mobile/smoke [link]
 #
 # With a link (https://fileporter.app/#R…), the app is opened on it,
 # as tapping a shared link would.
 set -eu
-out=${1:-mobile/smoke-out}
-link=${2:-}
-apk=mobile/android/app/build/outputs/apk/debug/app-debug.apk
-mkdir -p "$out"
+[ -n "${FP_EMULATOR_UP:-}" ] || FP_EMULATOR_UP=1 exec "$(dirname "$0")/emulator" "$0" "$@"
 
-# Its own adb server port: containers share the host network, so the
-# default (5037) could be a host adb server or another run.
-export ANDROID_ADB_SERVER_PORT=${ANDROID_ADB_SERVER_PORT:-5137}
-
-avd=fileporter
-if ! avdmanager list avd -c | grep -qx "$avd"; then
-  echo no | avdmanager create avd -n "$avd" -k "system-images;android-36;google_apis;x86_64" -d pixel_7 >/dev/null
-fi
-emulator -avd "$avd" -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect >"$out/emulator.log" 2>&1 &
-emu=$!
-trap 'adb emu kill >/dev/null 2>&1 || kill $emu 2>/dev/null || true' EXIT
-
-# Fail fast if the emulator dies, rather than waiting for it forever.
-alive() { kill -0 $emu 2>/dev/null || { echo "emulator exited:" >&2; tail -20 "$out/emulator.log" >&2; exit 1; }; }
-until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do alive; sleep 2; done
-echo "booted"
-adb install -r -g "$apk" >/dev/null
+out=${FP_OUT:-mobile/smoke-out}
+link=${1:-}
 adb logcat -c
 if [ -n "$link" ]; then
   adb shell am start -W -a android.intent.action.VIEW -d "'$link'" app.fileporter >/dev/null
