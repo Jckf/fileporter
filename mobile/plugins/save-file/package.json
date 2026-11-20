@@ -1,0 +1,21 @@
+{
+  "name": "@fileporter/save-file",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Save a received file where the user chooses (Android: Storage Access Framework, iOS: document export).",
+  "license": "AGPL-3.0-or-later",
+  "author": "Jim C K Flaten",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "ios/Sources",
+    "Package.swift"
+  ],
+  "capacitor": {
+    "ios": { "src": "ios" },
+    "android": { "src": "android" }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  }
+}

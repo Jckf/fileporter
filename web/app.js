@@ -15,6 +15,7 @@ import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
+import * as savefile from "./savefile.js";
 import * as platform from "./platform.js";
 
 const $ = (id) => document.getElementById(id);
@@ -460,7 +461,17 @@ function showSave(state, meta) {
   };
   const save = async () => {
     const data = await storage.getFile(state.id);
-    if ("showSaveFilePicker" in window) {
+    if (savefile.available()) {
+      // The app: the system's "Save as" dialog, through a native plugin.
+      setText("recv-save-status", "Saving…");
+      const result = await savefile.save(data, meta, (f) =>
+        setText("recv-save-status", `Saving… ${Math.floor(f * 100)}%`));
+      if (result === "done") {
+        await clearReceived(state, "Saved. fileporter's temporary copy was removed.");
+      } else {
+        setText("recv-save-status", "");
+      }
+    } else if ("showSaveFilePicker" in window) {
       // Chromium (incl. Edge, Opera): stream straight to the chosen file,
       // then the temporary copy can go at once.
       let handle;

@@ -13,7 +13,8 @@ set -eu
 cd "$(dirname "$0")"
 sync() {
   (cd .. && go run ./cmd/build -o mobile/www)
-  [ -d node_modules ] || npm ci --no-audit --no-fund
+  # Reinstall when the lockfile changed since the last install.
+  [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund
   npx cap sync
 }
 for step in "${@:-android}"; do

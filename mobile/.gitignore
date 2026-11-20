@@ -2,3 +2,5 @@ node_modules/
 # The built site, copied in by mobile/build.
 www/
 smoke-out/
+# Gradle output of the local plugins.
+plugins/*/android/build/
