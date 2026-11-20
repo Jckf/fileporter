@@ -1,0 +1,31 @@
+#!/bin/sh
+# Copyright (c) 2026 Jim C K Flaten
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Runs a command in the Android build container, from the repository
+# root, as the calling user (so built files aren't owned by root).
+# Caches (Go, npm, Gradle) persist in ~/.cache/fileporter-mobile.
+#
+#   mobile/run <command…>            e.g. mobile/run mobile/build android
+#   FP_IMAGE=emulator mobile/run …   the image with the Android emulator
+#
+# Images are built on first use (and when the Dockerfile changes).
+set -eu
+cd "$(dirname "$0")/.."
+target=${FP_IMAGE:-build}
+image="fileporter-android-$target"
+docker build -q --target "$target" -t "$image" -f mobile/docker/android.Dockerfile mobile/docker >/dev/null
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/fileporter-mobile"
+mkdir -p "$cache/home" "$cache/go" "$cache/gradle" "$cache/npm"
+tty=; [ -t 0 ] && tty=-it
+# --device /dev/kvm: the emulator needs hardware acceleration.
+kvm=; [ -e /dev/kvm ] && kvm="--device /dev/kvm"
+exec docker run --rm $tty $kvm --network host \
+  -u "$(id -u):$(id -g)" \
+  -e HOME=/home/builder -e ANDROID_USER_HOME=/home/builder/.android -e GOPATH=/cache/go -e GOCACHE=/cache/go/build \
+  -e GRADLE_USER_HOME=/cache/gradle -e npm_config_cache=/cache/npm \
+  -v "$cache/home:/home/builder" -v "$cache/go:/cache/go" \
+  -v "$cache/gradle:/cache/gradle" -v "$cache/npm:/cache/npm" \
+  -v "$PWD:/src" -w /src \
+  "$image" "$@"
