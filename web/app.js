@@ -15,6 +15,7 @@ import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
+import * as platform from "./platform.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {
@@ -181,7 +182,11 @@ function setupShare(link) {
   // The share sheet hands the link (and with it the keys) to an app the
   // user picks, which is what they asked for; offer it only where it
   // exists (mostly mobile).
-  if (navigator.share && navigator.canShare?.({ url: link })) {
+  const nativeShare = platform.plugin("Share");
+  if (nativeShare) {
+    $("native-share").hidden = false;
+    $("native-share").onclick = () => nativeShare.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
+  } else if (navigator.share && navigator.canShare?.({ url: link })) {
     $("native-share").hidden = false;
     $("native-share").onclick = () => navigator.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
   }
@@ -570,6 +575,16 @@ function watchConnectivity() {
 watchConnectivity();
 
 // --- Routing -----------------------------------------------------------------
+
+// In the app, a tapped fileporter link arrives as a launch URL, or as an
+// event while the app runs; either way its fragment becomes ours.
+if (platform.isApp) {
+  platform.onLinkOpened((hash) => { location.hash = hash; }); // hashchange reloads
+  if (!location.hash) {
+    const hash = await platform.launchFragment();
+    if (hash) history.replaceState(null, "", hash);
+  }
+}
 
 const f = frag.decode();
 if (!location.hash) {

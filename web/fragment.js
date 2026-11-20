@@ -28,6 +28,8 @@
 //   [13..44]  receiver private key (raw 32 bytes of "privkey:<hex>")
 //   [45..]    sender address (raw bytes of "tc<base64url>")
 
+import { publicBase } from "./platform.js";
+
 export const MODES = ["privacy", "performance"];
 const VERSION = 1;
 const ID_LEN = 12;
@@ -114,7 +116,7 @@ export function scrub() {
 }
 
 export function shareLink(senderState) {
-  const url = new URL(location.href);
+  const url = new URL(publicBase());
   url.hash = encode("r", { id: senderState.id, a: senderState.a, k: senderState.rk, sm: senderState.m });
   return url.toString();
 }

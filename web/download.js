@@ -5,6 +5,8 @@
 // through sw.js, which reports when the browser has read all of it, so
 // the temporary copy can be removed without asking the user.
 
+import { isApp } from "./platform.js";
+
 const STARTED_TIMEOUT_MS = 5000;
 
 let registration = null;
@@ -23,6 +25,8 @@ export function prepare() {
 }
 
 async function register() {
+  // The app saves through a native plugin instead.
+  if (isApp) return false;
   if (!("serviceWorker" in navigator) || !("BroadcastChannel" in window)) return false;
   // Relative to the page, not this (versioned) module: sw.js lives next
   // to index.html.

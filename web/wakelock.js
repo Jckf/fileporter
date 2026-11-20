@@ -11,6 +11,8 @@
 // The browser releases the lock whenever the page is hidden, so it is
 // requested again each time the page becomes visible while wanted.
 
+import { plugin } from "./platform.js";
+
 let wanted = false;
 let sentinel = null;
 let pending = null;
@@ -44,6 +46,14 @@ document.addEventListener("visibilitychange", () => {
 export function keepAwake(on) {
   if (wanted === on) return;
   wanted = on;
+  // In the app, the native flag (Android FLAG_KEEP_SCREEN_ON, iOS
+  // idleTimerDisabled): web views may lack the Wake Lock API, and the
+  // flag needs no re-acquiring.
+  const native = plugin("KeepAwake");
+  if (native) {
+    (on ? native.keepAwake() : native.allowSleep()).catch((err) => console.info("keep awake failed:", err?.message));
+    return;
+  }
   if (on) acquire();
   else release();
 }
