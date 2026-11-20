@@ -31,7 +31,7 @@ func main() {
 		hd := w.Header()
 		if strings.HasPrefix(r.URL.Path, "/v/") {
 			hd.Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else if strings.HasPrefix(r.URL.Path, "/engine.") && strings.HasSuffix(r.URL.Path, ".wasm.gz") {
+		} else if strings.HasPrefix(r.URL.Path, "/engine.") && strings.HasSuffix(r.URL.Path, ".wasm.gzip") {
 			hd.Set("Cache-Control", "public, max-age=31536000, immutable")
 			// Served raw; the page decompresses it itself.
 			hd.Set("Content-Type", "application/gzip")

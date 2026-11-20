@@ -26,10 +26,11 @@
 //     content, so a page only ever loads the assets it was built with.
 //     Only the current version is published; boot.js recovers a
 //     browser whose cached index.html points at a removed version.
-//   - engine.<hash>.wasm.gz: the js/wasm engine, gzipped and named by
-//     content, shared across versions. Static hosts can't be relied on
-//     to negotiate Content-Encoding for wasm, so the page fetches the
-//     .gz raw and decompresses it with DecompressionStream.
+//   - engine.<hash>.wasm.gzip: the js/wasm engine, gzipped and named
+//     by content, shared across versions. Static hosts can't be relied
+//     on to negotiate Content-Encoding for wasm, so the page fetches it
+//     raw and decompresses it with DecompressionStream. Not ".gz": the
+//     Android build (mobile/) gunzips .gz assets and drops the suffix.
 //     engine-manifest.json holds its URL, size and SHA-384.
 //   - THIRD_PARTY_LICENSES.txt: the license of every module compiled
 //     into the engine, plus Go's. Serving the engine to browsers is
@@ -106,7 +107,7 @@ func run(out string) error {
 		return err
 	}
 	sum := sha256.Sum256(gz.Bytes())
-	name := "engine." + hex.EncodeToString(sum[:6]) + ".wasm.gz"
+	name := "engine." + hex.EncodeToString(sum[:6]) + ".wasm.gzip"
 	if err := os.WriteFile(filepath.Join(out, name), gz.Bytes(), 0o644); err != nil {
 		return err
 	}
@@ -240,7 +241,7 @@ func writeThirdPartyLicenses(dst, goroot string) error {
 	sort.Strings(paths)
 
 	var b strings.Builder
-	b.WriteString("Third-party software shipped by fileporter: the engine (engine.*.wasm.gz),\n")
+	b.WriteString("Third-party software shipped by fileporter: the engine (engine.*.wasm.gzip),\n")
 	b.WriteString("wasm_exec.js and vendored browser libraries, with their licenses.\n\n")
 	section := func(title string, files ...string) error {
 		b.WriteString(strings.Repeat("=", 78) + "\n" + title + "\n" + strings.Repeat("=", 78) + "\n")
