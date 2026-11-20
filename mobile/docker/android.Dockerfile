@@ -3,7 +3,8 @@
 
 # Build environment for the Android app: everything `mobile/run`
 # needs to build the site (Go), sync it into the Capacitor project
-# (Node) and build the APK/AAB (JDK, Android SDK). The `emulator`
+# (Node), render the app icons (rsvg-convert) and build the APK/AAB
+# (JDK, Android SDK). The `emulator`
 # target adds an emulator and a system image for smoke tests.
 #
 # Versions are pinned: Capacitor 8 needs JDK 21 and Android SDK 36;
@@ -33,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf
  && sdkmanager --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${BUILD_TOOLS}" >/dev/null \
  # Builds run as the host user (see mobile/run); let Gradle read the SDK.
  && chmod -R a+rX $ANDROID_HOME
+# rsvg-convert, for the app icons (mobile/build assets).
+RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin && rm -rf /var/lib/apt/lists/*
 
 FROM build AS emulator
 ARG SYSTEM_IMAGE="system-images;android-36;google_apis;x86_64"

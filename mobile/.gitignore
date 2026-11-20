@@ -4,3 +4,5 @@ www/
 smoke-out/
 # Gradle output of the local plugins.
 plugins/*/android/build/
+# Rendered from assets/*.svg by mobile/build assets.
+assets/*.png
