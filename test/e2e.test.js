@@ -331,6 +331,48 @@ tests["save-picker"] = async (p) => {
   await assertCleanedUp(p);
 };
 
+tests["scan-qr"] = async (p) => {
+  // Receiving by scanning the sender's QR code, as the app offers. The
+  // receiver page is made to look like the app (a stand-in Capacitor
+  // without plugins), and its camera films a screenshot of the
+  // sender's QR code.
+  const { file, hash } = mkFile(MiB + 77);
+  await p.startSender(file, "privacy");
+  await p.sender.click("#toggle-qr");
+  const png = (await p.sender.locator("#qr").screenshot()).toString("base64");
+  const r = p.receiver;
+  await r.addInitScript((png) => {
+    window.Capacitor = { isNativePlatform: () => true, isPluginAvailable: () => false, Plugins: {} };
+    // (On the prototype: WebKit ignores assigning to the instance.)
+    Object.defineProperty(MediaDevices.prototype, "getUserMedia", { configurable: true, value: async () => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${png}`;
+      await img.decode();
+      // The code fills most of the frame, as when holding a phone to it
+      // (smaller, WebKit's stream blurs its modules together).
+      const c = Object.assign(document.createElement("canvas"), { width: 800, height: 800 });
+      const ctx = c.getContext("2d");
+      const draw = () => {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 60, 60, 680, 680);
+      };
+      draw();
+      setInterval(draw, 100); // a live stream needs new frames
+      return c.captureStream(10);
+    } });
+  }, png);
+  await r.goto(BASE);
+  await r.click("#scan-qr");
+  await r.locator("#recv-active").waitFor({ timeout: 60_000 }).catch(async (err) => { // Firefox decodes slowly
+    const why = await r.evaluate(() => [document.getElementById("scanner-status")?.textContent, document.getElementById("scan-error")?.textContent]).catch(() => []);
+    throw new Error(`${err.message.split("\n")[0]} (scanner: ${why.filter(Boolean).join(" / ") || "no message"})`);
+  });
+  if (!(await r.locator("#scanner").isHidden())) throw new Error("scanner still open");
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+};
+
 tests["download-fallback"] = async (p) => {
   // Without a service worker (the download can't be followed), saving
   // falls back to a plain download, and the user removes the copy.

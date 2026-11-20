@@ -85,5 +85,7 @@
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>fileporter uses the camera to scan the QR code of a file being sent to you.</string>
 </dict>
 </plist>

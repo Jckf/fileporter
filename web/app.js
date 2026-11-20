@@ -17,6 +17,7 @@ import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
 import * as savefile from "./savefile.js";
 import * as nativefile from "./nativefile.js";
+import * as scan from "./scan.js";
 import * as platform from "./platform.js";
 
 const $ = (id) => document.getElementById(id);
@@ -665,6 +666,19 @@ const f = frag.decode();
 frag.remember(f ? location.hash : "");
 if (!location.hash) {
   show("send-new");
+  // The app only: in a browser the phone's camera app scans the code.
+  if (platform.isApp && scan.available()) {
+    $("receive-card").hidden = false;
+    $("scan-qr").onclick = async () => {
+      setText("scan-error", "");
+      try {
+        const hash = await scan.scanLink();
+        if (hash) location.hash = hash; // hashchange reloads into receiving
+      } catch (err) {
+        setText("scan-error", err.message);
+      }
+    };
+  }
   choose(shared?.file ?? null);
   if (shared?.error) setText("drop-error", shared.error);
   startSweeping(null);

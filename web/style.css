@@ -235,6 +235,24 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 #drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 56px; border: 2px dashed var(--accent); border-radius: var(--radius); background: var(--surface); }
 #drop-overlay p { margin: 0; }
 
+/* QR scanner: the camera fills the screen, a square marks where the
+   code goes. Always dark, like a camera app, in either theme. */
+#scanner { position: fixed; inset: 0; z-index: 20; background: #000; color: #fff; }
+#scanner[hidden] { display: none; }
+#scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#scanner .scanner-frame {
+  position: absolute; left: 50%; top: 45%; width: min(70vw, 60vh, 320px); aspect-ratio: 1;
+  transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 16px;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.45);
+}
+#scanner p {
+  position: absolute; left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); margin: 0;
+  text-align: center; font-weight: 600; text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+#scanner button {
+  position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+}
+
 /* --- Mode choice ---------------------------------------------------------------- */
 
 fieldset.modes { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
