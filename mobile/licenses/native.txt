@@ -1,6 +1,17 @@
-Android libraries from Google's Maven repository (androidx.activity,
-androidx.appcompat, androidx.coordinatorlayout, androidx.core,
-androidx.core:core-splashscreen, androidx.fragment, androidx.webkit and
-their AndroidX dependencies), copyright The Android Open Source Project,
-and the Apache Cordova Android framework (org.apache.cordova:framework),
-copyright The Apache Software Foundation: Apache License 2.0, below.
+Android libraries from Google's Maven repository and Maven Central, all
+under the Apache License 2.0 (below):
+  - AndroidX (androidx.*: activity, annotation, appcompat, arch.core,
+    collection, concurrent, coordinatorlayout, core, core-splashscreen,
+    cursoradapter, customview, drawerlayout, emoji2, fragment,
+    interpolator, lifecycle, loader, profileinstaller,
+    resourceinspection, savedstate, startup, tracing, vectordrawable,
+    versionedparcelable, viewpager, webkit), copyright The Android Open
+    Source Project
+  - Apache Cordova Android framework (org.apache.cordova:framework),
+    copyright The Apache Software Foundation
+  - Kotlin standard library and kotlinx.coroutines (org.jetbrains.kotlin,
+    org.jetbrains.kotlinx) and JetBrains annotations (org.jetbrains),
+    copyright JetBrains s.r.o. and Kotlin Programming Language contributors
+  - Guava ListenableFuture (com.google.guava:listenablefuture),
+    copyright The Guava Authors
+  - JSpecify annotations (org.jspecify), copyright The JSpecify Authors
