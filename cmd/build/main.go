@@ -16,6 +16,8 @@
 //     (icon-192 and icon-512 from icon.svg; icon-maskable-512 and the
 //     180 px apple-touch-icon from icon-maskable.svg). icons/splash/
 //     holds the iPhone launch screens, made by go run ./cmd/splash.
+//     .well-known/ (when present) holds the files that let fileporter
+//     links open the Android and iOS apps (see mobile/README.md).
 //   - v/<hash>/: every other page asset (JS modules, workers, CSS,
 //     wasm_exec.js, vendored libraries, engine-manifest.json). <hash>
 //     covers all of them, and index.html is rewritten to point into
@@ -151,7 +153,7 @@ func run(out string) error {
 		}
 		switch {
 		case rel == "index.html", rel == "boot.js", rel == "sw.js", rel == "favicon.svg", rel == "manifest.webmanifest",
-			strings.HasPrefix(rel, "icons/"):
+			strings.HasPrefix(rel, "icons/"), strings.HasPrefix(rel, ".well-known/"):
 			rootFiles[rel] = b
 		default:
 			assets[rel] = b
