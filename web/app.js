@@ -528,7 +528,8 @@ async function receiver(state) {
     // (on phones especially) the address isn't easy to get at.
     const btn = $("unsupported-copy");
     btn.hidden = false;
-    copyButton(btn, location.href, () => {
+    // (In the app, the public address: its own means nothing elsewhere.)
+    copyButton(btn, new URL(location.hash, platform.publicBase()).href, () => {
       btn.querySelector("span").textContent = "Couldn't copy the link";
       btn.disabled = true;
     });
@@ -591,13 +592,16 @@ watchConnectivity();
 // event while the app runs; either way its fragment becomes ours.
 if (platform.isApp) {
   platform.onLinkOpened((hash) => { location.hash = hash; }); // hashchange reloads
-  if (!location.hash) {
-    const hash = await platform.launchFragment();
+  // Only when the app starts: opened on a link, else carrying on where
+  // it was closed. (Later loads at the start page mean "start over".)
+  if (frag.freshStart() && !location.hash) {
+    const hash = (await platform.launchFragment()) || frag.remembered();
     if (hash) history.replaceState(null, "", hash);
   }
 }
 
 const f = frag.decode();
+frag.remember(f ? location.hash : "");
 if (!location.hash) {
   show("send-new");
   showPickedFile();

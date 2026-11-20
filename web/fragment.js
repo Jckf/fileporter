@@ -28,7 +28,7 @@
 //   [13..44]  receiver private key (raw 32 bytes of "privkey:<hex>")
 //   [45..]    sender address (raw bytes of "tc<base64url>")
 
-import { publicBase } from "./platform.js";
+import { isApp, publicBase } from "./platform.js";
 
 export const MODES = ["privacy", "performance"];
 const VERSION = 1;
@@ -108,11 +108,53 @@ export function decode(hash = location.hash) {
 /** Replace the current history entry's fragment (no new history entry). */
 export function set(role, state) {
   history.replaceState(null, "", location.pathname + location.search + encode(role, state));
+  remember(location.hash);
 }
 
 /** Remove the fragment (and with it the keys) from the current history entry. */
 export function scrub() {
   history.replaceState(null, "", location.pathname + location.search);
+  remember("");
+}
+
+// In a browser the fragment survives a reload, so a transfer carries on.
+// The app instead starts at its root page when reopened (the system may
+// have closed it in the background), so it keeps the current session's
+// fragment itself: in its private storage, like the received data.
+const SAVED = "fileporter-session";
+const LAUNCHED = "fileporter-launched";
+
+/** Remembers `hash` as the session to come back to (app only). */
+export function remember(hash) {
+  if (!isApp) return;
+  try {
+    if (hash) localStorage.setItem(SAVED, hash);
+    else localStorage.removeItem(SAVED);
+  } catch {}
+}
+
+/**
+ * True the first time the app's page loads after it starts (it reloads
+ * on every new fragment and when going back to the start page).
+ */
+export function freshStart() {
+  if (!isApp) return false;
+  try {
+    const fresh = !sessionStorage.getItem(LAUNCHED);
+    sessionStorage.setItem(LAUNCHED, "1");
+    return fresh;
+  } catch {
+    return false;
+  }
+}
+
+/** The remembered session's fragment, or "". */
+export function remembered() {
+  try {
+    return (isApp && localStorage.getItem(SAVED)) || "";
+  } catch {
+    return "";
+  }
 }
 
 export function shareLink(senderState) {
