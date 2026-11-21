@@ -20,6 +20,7 @@ import * as nativefile from "./nativefile.js";
 import * as notify from "./notify.js";
 import * as scan from "./scan.js";
 import * as platform from "./platform.js";
+import "./edgefade.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {

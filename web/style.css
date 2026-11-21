@@ -98,6 +98,29 @@ body {
   body::before { display: none; }
 }
 
+/* Content fades out where it leaves the top or bottom of the screen:
+   strips of the page's background over it, shown while there is more
+   beyond that edge (edgefade.js). Below dialogs and the scanner. */
+html::before, html::after {
+  content: "";
+  position: fixed;
+  left: 0; right: 0;
+  height: 40px;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s;
+}
+html::before { top: 0; background: linear-gradient(var(--bg), transparent); }
+html::after { bottom: 0; background: linear-gradient(transparent, var(--bg)); }
+html.fade-top::before, html.fade-bottom::after { opacity: 1; }
+@media print, (forced-colors: active) {
+  html::before, html::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html::before, html::after { transition: none; }
+}
+
 /* --- Layout ---------------------------------------------------------------- */
 
 header.site, main, footer.site { width: 100%; max-width: 36rem; margin: 0 auto; padding: 0 16px; }
