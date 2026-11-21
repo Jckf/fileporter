@@ -82,7 +82,8 @@ export const remove = (id) => call("remove", { id });
 export const sweep = (keep, graceMs) => call("sweep", { keep, graceMs });
 export async function estimate() {
   const e = await call("estimate", {});
-  if (config.simQuota) e.quota = Math.min(e.quota || Infinity, e.usage + config.simQuota);
+  // The simulated limit stands for the one browsers lift for persistent storage.
+  if (config.simQuota && !(await navigator.storage.persisted?.())) e.quota = Math.min(e.quota || Infinity, e.usage + config.simQuota);
   return e;
 }
 

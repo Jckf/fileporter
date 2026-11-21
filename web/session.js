@@ -45,13 +45,14 @@ export class CancelledError extends FatalError {}
 /** The receiver's storage is full. Freeing space and retrying resumes. */
 export class NoSpaceError extends FatalError {}
 /**
- * The file won't fit in the browser's storage, but the user can pick a
- * file to receive it into (see savetarget.js). Not sent to the sender:
- * to it, this is a dropped connection, and the receiver redials once a
- * file is picked.
+ * The file won't fit in the browser's storage, but the user can make
+ * room: pick a file to receive it into (see savetarget.js), or allow
+ * persistent storage, which raises the limit in Firefox. Not sent to
+ * the sender: to it, this is a dropped connection, and the receiver
+ * redials once the user has acted.
  */
-export class NeedsTargetError extends Error {
-  constructor(hello) { super("needs a file to save into"); this.hello = hello; }
+export class NeedsRoomError extends Error {
+  constructor(hello) { super("needs more room"); this.hello = hello; }
 }
 
 const NOSPACE_SENDER = "The recipient's device doesn't have enough storage space for this file. The transfer continues once they free up some space and try again.";
@@ -205,13 +206,14 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
 /**
  * Receiver side of one dialed connection. Resolves with {hello, via}
  * once the file is complete and verified in storage; rejects on a
- * dropped connection (caller redials), with NeedsTargetError, or with
+ * dropped connection (caller redials), with NeedsRoomError, or with
  * FatalError.
  *
  * target: a picked file to receive into, or null for the browser's
- * storage. canPick: whether picking one is possible here.
+ * storage. canMakeRoom: whether the user can be asked to make room
+ * (NeedsRoomError) when the file doesn't fit.
  */
-export async function receiverSession(conn, { state, target, canPick, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
+export async function receiverSession(conn, { state, target, canMakeRoom, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
   // ctl lets the page stop this session, or cancel it (telling the peer).
@@ -241,7 +243,7 @@ export async function receiverSession(conn, { state, target, canPick, iceServers
     const { usage, quota } = await storage.estimate();
     const need = hello.size - st.chunks * CHUNK;
     if (!target && quota && quota - usage < need) {
-      if (canPick) throw new NeedsTargetError(hello);
+      if (canMakeRoom) throw new NeedsRoomError(hello);
       throw new NoSpaceError(`This device doesn't have enough storage space for this file (it needs ${fmtBytes(need)}; ${fmtBytes(quota - usage)} is available). Free up some space, then try again.`);
     }
 

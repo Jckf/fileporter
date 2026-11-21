@@ -140,6 +140,9 @@ const opfsList = (page) => page.evaluate(async () => {
   } catch { return []; }
 });
 
+// Answers Firefox's persistent-storage prompt with "allow".
+const FIREFOX_PREFS = { "dom.storageManager.prompt.testing": true, "dom.storageManager.prompt.testing.allow": true };
+
 class Pair {
   /**
    * Each side's context comes from its private-mode browser when given
@@ -152,7 +155,7 @@ class Pair {
       if (browser) return browser.newContext({ acceptDownloads: true });
       const dir = await mkdtemp(join(tmpdir(), "fileporter-profile-"));
       p.profiles.push(dir);
-      return engine.launchPersistentContext(dir, { acceptDownloads: true });
+      return engine.launchPersistentContext(dir, { acceptDownloads: true, ...(engine.name() === "firefox" ? { firefoxUserPrefs: FIREFOX_PREFS } : {}) });
     };
     p.sctx = await ctx(senderBrowser);
     p.rctx = await ctx(receiverBrowser);
@@ -593,7 +596,10 @@ tests["storage-support"].always = true;
 tests["nospace-upfront"] = async (p) => {
   const { file, hash } = mkFile(3 * MiB);
   // Where a save location can be picked, that's offered instead (below).
-  await p.receiver.addInitScript(() => { delete Window.prototype.showSaveFilePicker; delete window.showSaveFilePicker; });
+  await p.receiver.addInitScript(() => {
+    delete Window.prototype.showSaveFilePicker; delete window.showSaveFilePicker;
+    Object.defineProperty(StorageManager.prototype, "persist", { value: undefined, configurable: true });
+  });
   const link = await p.startSender(file, "privacy");
   await p.receiver.goto(withQuery(link, `quota=${MiB}`));
   await p.receiver.locator("#recv-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 60_000 });
@@ -670,6 +676,29 @@ tests["save-direct-resume"] = async (p) => {
 };
 tests["save-direct-resume"].browsers = ["chromium"];
 tests["save-direct-resume"].browsersWhy = "no save picker in this browser";
+
+// No save picker: asks for persistent storage, which (here, with the
+// simulated limit) makes room where the browser grants it.
+tests["persist-more"] = async (p) => {
+  const { file, hash } = mkFile(3 * MiB);
+  const r = p.receiver;
+  await r.addInitScript(() => { delete Window.prototype.showSaveFilePicker; delete window.showSaveFilePicker; });
+  const link = await p.startSender(file, "privacy");
+  await r.goto(withQuery(link, `quota=${MiB}`));
+  await r.locator("#recv-pick-text", { hasText: "unless you allow it" }).waitFor({ timeout: 60_000 });
+  await r.click("#recv-pick-btn");
+  if (!(await r.evaluate(() => navigator.storage.persisted()))) {
+    // Not granted (private windows): says so, and stops.
+    await r.locator("#recv-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 60_000 });
+    return "not granted here; reported no space";
+  }
+  const got = await p.download();
+  if (sha(got) !== hash) throw new Error("hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+  return "granted";
+};
+tests["persist-more"].browsers = ["firefox"];
+tests["persist-more"].browsersWhy = "only Firefox raises the limit for persistent storage and can be told to allow it here";
 
 tests["nospace-midway"] = async (p) => {
   const { file, hash } = mkFile(6 * MiB + 5);
@@ -762,7 +791,7 @@ tests["stale-index"].always = true;
 // --- Runner --------------------------------------------------------------------
 
 const launchPrivate = (name) => engines[name].launch(
-  name === "firefox" ? { firefoxUserPrefs: { "browser.privatebrowsing.autostart": true } } : {},
+  name === "firefox" ? { firefoxUserPrefs: { ...FIREFOX_PREFS, "browser.privatebrowsing.autostart": true } } : {},
 );
 
 let failed = 0;

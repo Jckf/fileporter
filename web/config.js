@@ -19,7 +19,7 @@ export const config = {
   // so and offers to reconnect (shorter for tests: ?stall=<ms>).
   stallMs: Number(params.get("stall")) || 30_000,
   // Testing only: simulate a nearly full disk on the receiver.
-  //   ?quota=<bytes>       report at most this much free storage
+  //   ?quota=<bytes>       report at most this much free storage (until persisted)
   //   ?writelimit=<bytes>  fail writes past this offset with QuotaExceededError
   simQuota: Number(params.get("quota")) || 0,
   simWriteLimit: Number(params.get("writelimit")) || 0,

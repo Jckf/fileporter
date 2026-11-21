@@ -11,7 +11,7 @@ import * as engine from "./engine.js";
 import * as frag from "./fragment.js";
 import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
-import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, NeedsTargetError, fmtBytes } from "./session.js";
+import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, NeedsRoomError, fmtBytes } from "./session.js";
 import * as savetarget from "./savetarget.js";
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
@@ -523,6 +523,24 @@ async function regainTarget(state, handle) {
   });
 }
 
+// Without a save picker (Firefox, Safari), a file too big for the
+// storage limit may still fit once the browser keeps our storage
+// persistent: Firefox then allows far more, and asks the user first.
+// Asked at most once per page.
+let persistAsked = false;
+const canAskPersist = async () =>
+  !persistAsked && !!navigator.storage?.persist && !(await navigator.storage.persisted().catch(() => true));
+
+async function askPersist(hello) {
+  persistAsked = true;
+  setText("recv-active-status", "Waiting for you to allow more storage.");
+  await askUser(`This file is ${fmtBytes(hello.size)}, more than your browser lets fileporter store unless you allow it. Allow more storage, and say yes if your browser asks.`,
+    "Allow more storage", async () => {
+      console.info("persistent storage:", await navigator.storage.persist().catch(() => false));
+      return true;
+    });
+}
+
 async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
   show("recv-active");
@@ -564,7 +582,7 @@ async function receiverLoop(state) {
     recvCtl = ctl;
     try {
       const res = await receiverSession(conn, {
-        state, target, canPick: savetarget.available(), iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
+        state, target, canMakeRoom: savetarget.available() || (await canAskPersist()), iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
         onProgress: (b) => { progress?.(b); stall?.progress(b); },
         onStatus: (s) => {
           if (s.phase === "hello") {
@@ -605,9 +623,13 @@ async function receiverLoop(state) {
       recvCtl = null;
       stall?.stop();
       if (recvStopped) return;
-      if (err instanceof NeedsTargetError) {
-        target = await chooseTarget(state, err.hello.name,
-          `This file is ${fmtBytes(err.hello.size)}, too big for your browser to keep until you save it. Choose where to save it now, and it's saved there as it arrives.`);
+      if (err instanceof NeedsRoomError) {
+        if (savetarget.available()) {
+          target = await chooseTarget(state, err.hello.name,
+            `This file is ${fmtBytes(err.hello.size)}, too big for your browser to keep until you save it. Choose where to save it now, and it's saved there as it arrives.`);
+        } else {
+          await askPersist(err.hello); // if that wasn't enough, the next try says so
+        }
         attempt = -1; // redial at once
         continue;
       }
