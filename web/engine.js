@@ -86,10 +86,11 @@ export const newSession = (args) => call("newSession", args);
 
 /** Returns {addr, close()}; onConnection receives Conn objects. */
 export async function listen(args, onConnection) {
-  const { listenerId, addr } = await call("listen", args);
+  const { listenerId, addr, region } = await call("listen", args);
   incomingHandlers.set(listenerId, onConnection);
   return {
     addr,
+    region, // the relay's code, e.g. "fra" (diagnostics)
     close() {
       incomingHandlers.delete(listenerId);
       call("closeListener", { listenerId }).catch(() => {});
@@ -98,6 +99,8 @@ export async function listen(args, onConnection) {
 }
 
 export async function dial(args) {
-  const { connId, port } = await call("dial", args);
-  return new Conn(connId, port);
+  const { connId, port, region } = await call("dial", args);
+  const c = new Conn(connId, port);
+  c.region = region; // the relay's code, e.g. "fra" (diagnostics)
+  return c;
 }

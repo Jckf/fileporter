@@ -101,11 +101,11 @@ const calls = {
       onConnection: (c) => post({ op: "incoming", listenerId, connId: registerConn(c), port: c.port }),
     });
     listeners.set(listenerId, ln);
-    return { listenerId, addr: ln.addr };
+    return { listenerId, addr: ln.addr, region: ln.region };
   },
   async dial(args) {
     const c = await self.tsDial(args);
-    return { connId: registerConn(c), port: c.port };
+    return { connId: registerConn(c), port: c.port, region: c.region };
   },
   async closeListener({ listenerId }) {
     listeners.get(listenerId)?.close();

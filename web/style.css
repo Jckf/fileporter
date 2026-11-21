@@ -331,6 +331,14 @@ details.explain p { margin: 8px 0 0; }
 /* --- Transfer --------------------------------------------------------------------- */
 
 .transfer { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+/* Shown when no data has moved for a while (app.js, stallWatch). */
+.stall {
+  margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-sm);
+  color: var(--warn); background: var(--warn-soft);
+}
+.stall p { margin: 0 0 10px; }
+.stall p.muted { margin: 10px 0 0; color: var(--muted); }
+.stall code { font-size: 0.8rem; overflow-wrap: anywhere; user-select: all; }
 .transfer-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; min-height: 28px; }
 .status { font-weight: 500; }
 .badge {

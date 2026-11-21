@@ -247,7 +247,10 @@ async function startSender(state, file) {
   setText("send-active-size", fmtBytes(file.size));
   setText("send-active-ext", ui.fileExt(file.name));
   setText("send-active-status", "Starting…");
-  const progress = ui.progressView("send-progress", "send-progress-text", file.size);
+  const shown = ui.progressView("send-progress", "send-progress-text", file.size);
+  // Reconnecting drops this session; the recipient redials.
+  const stall = stallWatch("send", file.size, () => currentCtl?.stop?.());
+  const progress = (b) => { shown(b); stall.progress(b); };
   progress(0);
 
   const hashes = new ChunkHashes(file);
@@ -277,11 +280,16 @@ async function startSender(state, file) {
               $("send-transfer").dataset.phase = "active";
               ui.setBadge($("send-badge"), s.via);
               setText("send-active-status", "Sending");
+              stall.start(s.via, relayName(listener.region));
             }
-            if (s.phase === "verifying") setText("send-active-status", "Verifying…");
+            if (s.phase === "verifying") {
+              stall.stop();
+              setText("send-active-status", "Verifying…");
+            }
           },
         });
         delivered = true;
+        stall.stop();
         setGuard(false);
         listener.close();
         frag.scrub();
@@ -291,6 +299,7 @@ async function startSender(state, file) {
         ui.setStep("send-done", 3);
       } catch (err) {
         if (currentCtl !== ctl) return; // replaced by a newer connection
+        stall.stop();
         $("send-transfer").dataset.phase = "waiting";
         if (err instanceof CancelledError) {
           setGuard(false);
@@ -328,6 +337,49 @@ function senderStartFailed(err, errorId) {
 // so it's usually known by "Create link".
 let regionP = null;
 const nearestRegion = () => (regionP ||= relay.nearestRegion(config.derpMapURL));
+
+// --- Stalled transfers ------------------------------------------------------
+
+const VERSION = new URL(import.meta.url).pathname.split("/").at(-2) || "dev";
+
+// "fra" or, where this page measured it (relay.js), "fra 31ms".
+function relayName(code) {
+  if (!code) return "";
+  const p = relay.picked;
+  return p && p.code === code ? `${code} ${Math.round(p.ms)}ms` : code;
+}
+
+// No bytes moving for config.stallMs while connected: say so, offer
+// to reconnect, and show a line to include in a report.
+function stallWatch(side, total, onRetry) {
+  const note = $(`${side}-stall`);
+  let bytes = 0, since = 0, via = "", region = "", timer = null;
+  const hide = () => { note.hidden = true; };
+  $(`${side}-stall-retry`).onclick = () => { hide(); since = Date.now(); onRetry(); };
+  const check = () => {
+    const s = Math.round((Date.now() - since) / 1000);
+    if (Date.now() - since < config.stallMs) return;
+    setText(`${side}-stall-text`, bytes ? `Nothing has come through for ${s} seconds.` : `No data has arrived after ${s} seconds.`);
+    setText(`${side}-stall-code`, [
+      VERSION, side, via || "?", region || "relay ?",
+      `${bytes}/${total}`, `${s}s`, platform.isApp ? platform.os : "web",
+    ].join(" · "));
+    note.hidden = false;
+  };
+  return {
+    /** Data is meant to be flowing now: over via, relayed by region. */
+    start(v, r) {
+      via = v || via;
+      region = r || region;
+      since = Date.now();
+      hide();
+      clearInterval(timer);
+      timer = setInterval(check, 1000);
+    },
+    progress(b) { if (b !== bytes) { bytes = b; since = Date.now(); hide(); } },
+    stop() { clearInterval(timer); timer = null; hide(); },
+  };
+}
 
 $("send-start").onclick = async () => {
   const file = chosenFile();
@@ -414,6 +466,7 @@ async function receiverLoop(state) {
   ui.setStep("recv-active", 1);
   setGuard(true);
   let progress = null;
+  let stall = null;
   setText("recv-active-status", engineReady ? "Connecting…" : "Getting ready…");
   await engine.ready;
   const iceServers = state.rm === "performance" && state.sm === "performance" ? await rtc.stunServers(config.derpMapURL) : [];
@@ -445,7 +498,7 @@ async function receiverLoop(state) {
     try {
       const res = await receiverSession(conn, {
         state, iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
-        onProgress: (b) => progress?.(b),
+        onProgress: (b) => { progress?.(b); stall?.progress(b); },
         onStatus: (s) => {
           if (s.phase === "hello") {
             attempt = -1; // got going: redial at once if this drops
@@ -454,6 +507,8 @@ async function receiverLoop(state) {
             setText("recv-active-size", fmtBytes(s.hello.size));
             setText("recv-active-ext", ui.fileExt(s.hello.name));
             progress = ui.progressView("recv-progress", "recv-progress-text", s.hello.size);
+            // Reconnecting drops this session, and the loop redials at once.
+            stall ||= stallWatch("recv", s.hello.size, () => recvCtl?.stop?.());
           }
           if (s.phase === "negotiated") {
             setText("recv-active-effective", describeEffective(s.effective, state.rm, s.peerMode, "the sender"));
@@ -463,15 +518,21 @@ async function receiverLoop(state) {
             $("recv-transfer").dataset.phase = "active";
             ui.setBadge($("recv-badge"), s.via);
             setText("recv-active-status", "Receiving");
+            stall?.start(s.via, relayName(conn.region));
           }
-          if (s.phase === "verifying") setText("recv-active-status", "Verifying…");
+          if (s.phase === "verifying") {
+            stall?.stop();
+            setText("recv-active-status", "Verifying…");
+          }
         },
       });
       recvCtl = null;
+      stall?.stop();
       showSave(state, { name: res.hello.name, size: res.hello.size, type: res.hello.type });
       return;
     } catch (err) {
       recvCtl = null;
+      stall?.stop();
       if (recvStopped) return;
       if (err instanceof CancelledError) {
         await storage.remove(state.id).catch(() => {});

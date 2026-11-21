@@ -458,6 +458,29 @@ tests["relay-nearest"] = async (p) => {
   return [...new Set(all)].join(", ");
 };
 
+tests["stall-reconnect"] = async (p) => {
+  // The receiver goes offline mid-transfer: it must say nothing is
+  // getting through, and once back online, Reconnect must finish it.
+  const { file, hash } = mkFile(24 * MiB + 5);
+  const link = await p.startSender(file, "privacy");
+  await p.receiver.goto(link.replace("/#", "/?stall=4000#"));
+  await p.receiver.locator("#recv-active").waitFor();
+  await p.waitRecvAtLeast(2 * MiB);
+  await p.rctx.setOffline(true);
+  await p.receiver.locator("#recv-stall").waitFor({ timeout: 60_000 });
+  const code = await p.receiver.textContent("#recv-stall-code");
+  if (!/ · recv · relay · [a-z]{3} · \d+\/\d+ · \d+s · web$/.test(code)) throw new Error(`unexpected report line: ${code}`);
+  await p.rctx.setOffline(false);
+  await p.receiver.click("#recv-stall-retry");
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch after reconnecting");
+  return code;
+};
+
+// Taking the browser offline only cuts the engine worker's relay
+// connection in Chromium; elsewhere the transfer just carries on.
+tests["stall-reconnect"].browsers = ["chromium"];
+tests["stall-reconnect"].browsersWhy = "offline mode doesn't cut a worker's WebSocket here";
+
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);
@@ -686,6 +709,10 @@ for (const name of browsers) {
     const label = `${name.padEnd(8)} ${session.padEnd(9)}`;
     for (const [tname, fn] of Object.entries(tests)) {
       if (only.length && !only.some((o) => tname.startsWith(o))) continue;
+      if (fn.browsers && !fn.browsers.includes(name)) {
+        console.log(`SKIP ${label} ${tname.padEnd(34)} ${fn.browsersWhy}`);
+        continue;
+      }
       // Without private-mode storage, only `always` tests get a private
       // receiver; the rest test a private sender against a normal one.
       const privateReceiver = browser && (works || fn.always);

@@ -124,8 +124,9 @@ func tsNewSession(this js.Value, args []js.Value) any {
 // tsNewSession. Only the client whose public key is allowClient may
 // connect; every other client is silently ignored by tailcat.
 //
-// It resolves to {addr: string, close: () => void}. Each incoming
-// TCP connection is passed to onConnection as a Conn (see makeJSConn).
+// It resolves to {addr: string, region: string (the relay's code),
+// close: () => void}. Each incoming TCP connection is passed to
+// onConnection as a Conn (see makeJSConn).
 func tsListen(this js.Value, args []js.Value) any {
 	if len(args) != 1 || args[0].Type() != js.TypeObject {
 		return rejectedPromise(errors.New("tsListen requires an options object"))
@@ -181,7 +182,8 @@ func tsListen(this js.Value, args []js.Value) any {
 			return nil, fmt.Errorf("Server.Start: %w", err)
 		}
 		return map[string]any{
-			"addr": string(pk.Public.Addr()),
+			"addr":   string(pk.Public.Addr()),
+			"region": ci.Region[0].RegionCode, // the relay, for diagnostics
 			"close": js.FuncOf(func(this js.Value, args []js.Value) any {
 				srv.Close()
 				return nil
@@ -192,7 +194,8 @@ func tsListen(this js.Value, args []js.Value) any {
 
 // tsDial connects to the sender with the receiver's client key from
 // tsNewSession and opens one TCP stream (default port 1).
-// It resolves to a Conn (see makeJSConn).
+// It resolves to a Conn (see makeJSConn), with region set to the
+// relay's code.
 func tsDial(this js.Value, args []js.Value) any {
 	if len(args) != 1 || args[0].Type() != js.TypeObject {
 		return rejectedPromise(errors.New("tsDial requires an options object"))
@@ -235,7 +238,12 @@ func tsDial(this js.Value, args []js.Value) any {
 			cl.Close()
 			return nil, fmt.Errorf("DialTCPPort: %w", err)
 		}
-		return makeJSConn(c, port, func() { cl.Close() }), nil
+		jc := makeJSConn(c, port, func() { cl.Close() })
+		// Which relay carries it, for diagnostics.
+		if r := cl.DERPRegion(); r != nil {
+			jc.Set("region", r.RegionCode)
+		}
+		return jc, nil
 	})
 }
 
