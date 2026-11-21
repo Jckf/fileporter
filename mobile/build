@@ -31,6 +31,11 @@ assets() {
   npx capacitor-assets generate --android --ios \
     --iconBackgroundColor "$green" --iconBackgroundColorDark "$green" \
     --splashBackgroundColor "$green" --splashBackgroundColorDark "$green"
+  # A monochrome layer, which Android 13+ tints when the phone uses
+  # themed icons (@capacitor/assets doesn't make one).
+  for f in android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml; do
+    grep -q '<monochrome>' "$f" || sed -i 's|</adaptive-icon>|    <monochrome>\n        <inset android:drawable="@drawable/ic_launcher_monochrome" android:inset="16.7%" />\n    </monochrome>\n</adaptive-icon>|' "$f"
+  done
 }
 for step in "${@:-android}"; do
   case $step in
