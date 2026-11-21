@@ -75,7 +75,7 @@
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1"/><path d="M14 14h2.5v2.5H14zM20.5 14v.01M14 20.5h.01M17.5 20.5h3v-3"/></symbol>
-    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4"/><path d="M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/></symbol>
+    <symbol id="i-send-out" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4"/><path d="M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/></symbol>
     <symbol id="i-relay" viewBox="0 0 24 24"><circle cx="4.5" cy="16" r="2"/><circle cx="19.5" cy="16" r="2"/><circle cx="12" cy="6" r="2"/><path d="m5.8 14.3 4.9-6.6M13.3 7.7l4.9 6.6"/></symbol>
     <symbol id="i-direct" viewBox="0 0 24 24"><circle cx="4.5" cy="12" r="2"/><circle cx="19.5" cy="12" r="2"/><path d="M6.5 12h11"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
@@ -197,15 +197,15 @@
           <div class="file-meta"><span class="file-name" id="send-active-file"></span><span class="file-size" id="send-active-size"></span></div>
         </div>
 
-        <div id="share-block">
+        <div id="send-invite">
           <h2 class="small-heading">Share this link with the recipient</h2>
           <div class="link-row">
-            <input id="share-link" readonly aria-label="Share link">
+            <input id="send-link" readonly aria-label="Share link">
             <button id="copy-link" class="primary"><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
           </div>
           <div class="link-actions">
             <button id="toggle-qr" class="ghost" aria-expanded="false" aria-controls="qr-panel"><svg class="icon"><use href="#i-qr"/></svg>QR code</button>
-            <button id="native-share" class="ghost" hidden><svg class="icon"><use href="#i-share"/></svg>Share…</button>
+            <button id="send-via-app" class="ghost" hidden><svg class="icon"><use href="#i-send-out"/></svg>Share…</button>
           </div>
           <div id="qr-panel" hidden>
             <div id="qr" class="qr"></div>

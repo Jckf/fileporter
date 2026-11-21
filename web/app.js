@@ -209,9 +209,9 @@ function copyButton(btn, text, onFail) {
 }
 
 function setupShare(link) {
-  $("share-link").value = link;
-  $("share-link").onfocus = (e) => e.target.select();
-  copyButton($("copy-link"), link, () => $("share-link").select()); // let the user copy manually
+  $("send-link").value = link;
+  $("send-link").onfocus = (e) => e.target.select();
+  copyButton($("copy-link"), link, () => $("send-link").select()); // let the user copy manually
   const qrBtn = $("toggle-qr");
   qrBtn.onclick = () => {
     const open = $("qr-panel").hidden;
@@ -224,11 +224,11 @@ function setupShare(link) {
   // exists (mostly mobile).
   const nativeShare = platform.plugin("Share");
   if (nativeShare) {
-    $("native-share").hidden = false;
-    $("native-share").onclick = () => nativeShare.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
+    $("send-via-app").hidden = false;
+    $("send-via-app").onclick = () => nativeShare.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
   } else if (navigator.share && navigator.canShare?.({ url: link })) {
-    $("native-share").hidden = false;
-    $("native-share").onclick = () => navigator.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
+    $("send-via-app").hidden = false;
+    $("send-via-app").onclick = () => navigator.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
   }
 }
 
@@ -264,7 +264,7 @@ async function startSender(state, file) {
       currentCtl?.stop?.();
       const ctl = {};
       currentCtl = ctl;
-      $("share-block").hidden = true;
+      $("send-invite").hidden = true;
       ui.setStep("send-active", 2);
       setText("send-active-status", "Recipient connected…");
       try {

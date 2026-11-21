@@ -185,7 +185,7 @@ class Pair {
     await s.check(`input[name="send-mode"][value="${mode}"]`);
     await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
     await s.click("#send-start");
-    return s.locator("#share-link").evaluate(async (el) => {
+    return s.locator("#send-link").evaluate(async (el) => {
       while (!el.value) await new Promise((r) => setTimeout(r, 100));
       return el.value;
     });

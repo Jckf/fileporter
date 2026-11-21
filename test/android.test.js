@@ -87,7 +87,7 @@ tests["receive-save"] = async ({ desktop, device, shell, find, tap, appPage }) =
   await s.check('input[name="send-mode"][value="privacy"]');
   await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
   await s.click("#send-start");
-  const link = await s.locator("#share-link").evaluate(async (el) => {
+  const link = await s.locator("#send-link").evaluate(async (el) => {
     while (!el.value) await new Promise((r) => setTimeout(r, 100));
     return el.value;
   });
@@ -198,7 +198,7 @@ tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) =>
   await page.check('input[name="send-mode"][value="privacy"]');
   await page.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
   await page.click("#send-start");
-  const link = await page.locator("#share-link").evaluate(async (el) => {
+  const link = await page.locator("#send-link").evaluate(async (el) => {
     while (!el.value) await new Promise((r) => setTimeout(r, 100));
     return el.value;
   });
