@@ -625,8 +625,7 @@ async function receiverLoop(state) {
       if (recvStopped) return;
       if (err instanceof NeedsRoomError) {
         if (savetarget.available()) {
-          target = await chooseTarget(state, err.hello.name,
-            `This file is ${fmtBytes(err.hello.size)}, too big for your browser to keep until you save it. Choose where to save it now, and it's saved there as it arrives.`);
+          target = await chooseTarget(state, err.hello.name, "Choose where to save this file.");
         } else {
           await askPersist(err.hello); // if that wasn't enough, the next try says so
         }

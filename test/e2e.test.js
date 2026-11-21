@@ -631,7 +631,7 @@ tests["save-direct"] = async (p) => {
   const link = await p.startSender(file, "privacy");
   const r = p.receiver;
   await r.goto(withQuery(link, `quota=${MiB}`));
-  await r.locator("#recv-pick-text", { hasText: "too big for your browser" }).waitFor({ timeout: 60_000 });
+  await r.locator("#recv-pick-text", { hasText: "Choose where to save this file" }).waitFor({ timeout: 60_000 });
   await r.click("#recv-pick-btn");
   await p.waitRecvAtLeast(3 * MiB);
   await r.reload();
