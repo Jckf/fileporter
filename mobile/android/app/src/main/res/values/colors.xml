@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The page's background colour (bg in web/style.css), shown behind
+         the status and navigation bars, outside the web view. -->
+    <color name="pageBackground">#f6f7f9</color>
+</resources>
