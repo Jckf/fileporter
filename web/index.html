@@ -290,6 +290,10 @@
           </div>
           <div class="bar"><progress id="recv-progress" max="1" value="0"></progress></div>
           <p id="recv-progress-text" class="muted small"></p>
+          <div id="recv-pick" class="pick" hidden>
+            <p id="recv-pick-text"></p>
+            <button id="recv-pick-btn" class="primary"><svg class="icon"><use href="#i-download"/></svg><span id="recv-pick-label"></span></button>
+          </div>
           <div id="recv-stall" class="stall" role="status" hidden>
             <p><strong>Nothing is getting through.</strong> <span id="recv-stall-text"></span> The connection may be blocked or very slow. Reconnecting can help.</p>
             <button id="recv-stall-retry" class="secondary">Reconnect</button>

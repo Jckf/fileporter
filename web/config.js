@@ -23,4 +23,7 @@ export const config = {
   //   ?writelimit=<bytes>  fail writes past this offset with QuotaExceededError
   simQuota: Number(params.get("quota")) || 0,
   simWriteLimit: Number(params.get("writelimit")) || 0,
+  // Testing only: ?commit=<bytes> commits a picked file (see
+  // storage-worker.js) this often instead of rarely.
+  commitEvery: Number(params.get("commit")) || 0,
 };

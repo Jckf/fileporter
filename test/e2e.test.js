@@ -592,6 +592,8 @@ tests["storage-support"].always = true;
 
 tests["nospace-upfront"] = async (p) => {
   const { file, hash } = mkFile(3 * MiB);
+  // Where a save location can be picked, that's offered instead (below).
+  await p.receiver.addInitScript(() => { delete Window.prototype.showSaveFilePicker; delete window.showSaveFilePicker; });
   const link = await p.startSender(file, "privacy");
   await p.receiver.goto(withQuery(link, `quota=${MiB}`));
   await p.receiver.locator("#recv-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 60_000 });
@@ -603,6 +605,71 @@ tests["nospace-upfront"] = async (p) => {
   if (sha(got) !== hash) throw new Error("hash mismatch after retry");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
 };
+
+// Stands in for the save picker: hands out a file in OPFS (outside
+// fileporter's own directory), which supports the same writes.
+const fakeSavePicker = () => {
+  window.showSaveFilePicker = async ({ suggestedName }) =>
+    (await navigator.storage.getDirectory()).getFileHandle(`picked-${suggestedName}`, { create: true });
+};
+const pickedHash = (page, name) => page.evaluate(async (name) => {
+  const f = await (await (await navigator.storage.getDirectory()).getFileHandle(`picked-${name}`)).getFile();
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await f.arrayBuffer())), (b) => b.toString(16).padStart(2, "0")).join("");
+}, name);
+
+// Too big for the browser's storage: received straight into a picked
+// file, surviving a reload on the way.
+tests["save-direct"] = async (p) => {
+  const { file, hash } = mkFile(12 * MiB + 5, "big.bin");
+  await p.receiver.addInitScript(fakeSavePicker);
+  const link = await p.startSender(file, "privacy");
+  const r = p.receiver;
+  await r.goto(withQuery(link, `quota=${MiB}`));
+  await r.locator("#recv-pick-text", { hasText: "too big for your browser" }).waitFor({ timeout: 60_000 });
+  await r.click("#recv-pick-btn");
+  await p.waitRecvAtLeast(3 * MiB);
+  await r.reload();
+  await r.locator("#recv-cleared").waitFor({ timeout: 300_000 });
+  const text = await r.textContent("#recv-cleared-text");
+  if (!text.includes("Saved to picked-big.bin")) throw new Error(`unexpected: ${text}`);
+  if ((await pickedHash(r, "big.bin")) !== hash) throw new Error("hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+  await assertCleanedUp(p);
+  if (await r.evaluate(() => new Promise((res) => {
+    const q = indexedDB.open("fileporter");
+    q.onsuccess = () => q.result.transaction("save-targets").objectStore("save-targets").count().onsuccess = (e) => res(e.target.result);
+  }))) throw new Error("save target not forgotten");
+};
+tests["save-direct"].browsers = ["chromium"];
+tests["save-direct"].browsersWhy = "no save picker in this browser";
+
+// The same, with part of the file committed before the reload: picks up
+// from there rather than starting over.
+tests["save-direct-resume"] = async (p) => {
+  const { file, hash } = mkFile(16 * MiB + 5, "big.bin");
+  await p.receiver.addInitScript(fakeSavePicker);
+  const link = await p.startSender(file, "privacy");
+  const r = p.receiver;
+  const url = withQuery(link, `quota=${MiB}&commit=${4 * MiB}`);
+  await r.goto(url);
+  await r.locator("#recv-pick-btn").waitFor({ timeout: 60_000 });
+  await r.click("#recv-pick-btn");
+  await p.waitRecvAtLeast(6 * MiB);
+  await r.goto("about:blank");
+  // "Resuming…" is shown only for a moment: record every status.
+  await r.addInitScript(() => addEventListener("DOMContentLoaded", () => {
+    const el = document.getElementById("recv-active-status");
+    window.__statuses = [];
+    new MutationObserver(() => window.__statuses.push(el.textContent)).observe(el, { childList: true, characterData: true, subtree: true });
+  }));
+  await r.goto(url);
+  await r.locator("#recv-cleared").waitFor({ timeout: 300_000 });
+  if (!(await r.evaluate(() => window.__statuses)).includes("Resuming…")) throw new Error("started over instead of resuming");
+  if ((await pickedHash(r, "big.bin")) !== hash) throw new Error("hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+};
+tests["save-direct-resume"].browsers = ["chromium"];
+tests["save-direct-resume"].browsersWhy = "no save picker in this browser";
 
 tests["nospace-midway"] = async (p) => {
   const { file, hash } = mkFile(6 * MiB + 5);

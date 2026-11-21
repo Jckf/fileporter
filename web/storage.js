@@ -40,7 +40,9 @@ function getWorker() {
 // deploy removes the old version, so a tab that stays open across a
 // deploy must not fetch any of its files later.
 getWorker();
-if (config.simWriteLimit) call("configure", { writeLimit: config.simWriteLimit }).catch(() => {});
+if (config.simWriteLimit || config.commitEvery) {
+  call("configure", { writeLimit: config.simWriteLimit, commitEvery: config.commitEvery }).catch(() => {});
+}
 
 function call(op, args, transfer) {
   if (failed) return Promise.reject(failed);
@@ -70,7 +72,8 @@ export function supported() {
 }
 
 export const peek = (id) => call("peek", { id });
-export const open = (id, info) => call("open", { id, info });
+/** target: a picked file to write the data to (see savetarget.js), or null for OPFS. */
+export const open = (id, info, target = null) => call("open", { id, info, target });
 export const truncate = (id, chunks) => call("truncate", { id, chunks });
 export const root = (id) => call("root", { id });
 export const complete = (id) => call("complete", { id });

@@ -44,6 +44,15 @@ export class FatalError extends Error {}
 export class CancelledError extends FatalError {}
 /** The receiver's storage is full. Freeing space and retrying resumes. */
 export class NoSpaceError extends FatalError {}
+/**
+ * The file won't fit in the browser's storage, but the user can pick a
+ * file to receive it into (see savetarget.js). Not sent to the sender:
+ * to it, this is a dropped connection, and the receiver redials once a
+ * file is picked.
+ */
+export class NeedsTargetError extends Error {
+  constructor(hello) { super("needs a file to save into"); this.hello = hello; }
+}
 
 const NOSPACE_SENDER = "The recipient's device doesn't have enough storage space for this file. The transfer continues once they free up some space and try again.";
 const isQuotaError = (err) => err?.name === "QuotaExceededError";
@@ -196,9 +205,13 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
 /**
  * Receiver side of one dialed connection. Resolves with {hello, via}
  * once the file is complete and verified in storage; rejects on a
- * dropped connection (caller redials) or with FatalError.
+ * dropped connection (caller redials), with NeedsTargetError, or with
+ * FatalError.
+ *
+ * target: a picked file to receive into, or null for the browser's
+ * storage. canPick: whether picking one is possible here.
  */
-export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
+export async function receiverSession(conn, { state, target, canPick, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
   // ctl lets the page stop this session, or cancel it (telling the peer).
@@ -222,14 +235,15 @@ export async function receiverSession(conn, { state, iceServers, iceTimeoutMs, o
     if (hello.chunkSize !== CHUNK || !Number.isSafeInteger(hello.size) || hello.size < 0) throw new FatalError("Something went wrong with the sender's file details. Ask them for a new link.");
 
     const info = { name: String(hello.name || "download"), size: hello.size, type: String(hello.type || ""), chunkSize: CHUNK };
-    const st = await storage.open(state.id, info);
+    onStatus({ phase: "hello", hello });
+    const st = await storage.open(state.id, info, target);
     const n = chunkCount(hello.size);
     const { usage, quota } = await storage.estimate();
     const need = hello.size - st.chunks * CHUNK;
-    if (quota && quota - usage < need) {
+    if (!target && quota && quota - usage < need) {
+      if (canPick) throw new NeedsTargetError(hello);
       throw new NoSpaceError(`This device doesn't have enough storage space for this file (it needs ${fmtBytes(need)}; ${fmtBytes(quota - usage)} is available). Free up some space, then try again.`);
     }
-    onStatus({ phase: "hello", hello });
 
     // Our fragment is authoritative for the mode we agreed to; a sender
     // claiming something weaker now doesn't change it.

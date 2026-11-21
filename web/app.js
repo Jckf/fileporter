@@ -11,7 +11,8 @@ import * as engine from "./engine.js";
 import * as frag from "./fragment.js";
 import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
-import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
+import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, NeedsTargetError, fmtBytes } from "./session.js";
+import * as savetarget from "./savetarget.js";
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
@@ -105,7 +106,9 @@ function describeEffective(effective, mine, peer, peerRole) {
 
 async function startSweeping(keep) {
   if (!(await storage.supported())) return;
-  const run = () => storage.sweep(keep, config.sweepGraceMs).catch((err) => console.warn("sweep failed", err));
+  const run = () => storage.sweep(keep, config.sweepGraceMs)
+    .then((ids) => Promise.all(ids.map(savetarget.forget)))
+    .catch((err) => console.warn("sweep failed", err));
   await run();
   setInterval(run, 5 * 60 * 1000);
 }
@@ -460,6 +463,66 @@ let recvStopped = false;
 // clean slate if the sender's side changed (reloaded page).
 const DIAL_TIMEOUT_MS = 20000;
 
+/** Shows a prompt with one button and resolves with the first click that `action` accepts (returns non-null for). */
+function askUser(text, label, action) {
+  setText("recv-pick-text", text);
+  setText("recv-pick-label", label);
+  $("recv-pick").hidden = false;
+  return new Promise((resolve) => {
+    const btn = $("recv-pick-btn");
+    btn.disabled = false;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const v = await action();
+        if (v != null) {
+          $("recv-pick").hidden = true;
+          btn.onclick = null;
+          resolve(v);
+          return;
+        }
+      } catch (err) {
+        setText("recv-active-status", `Something went wrong: ${err.message}. Try again.`);
+      }
+      btn.disabled = false;
+    };
+  });
+}
+
+/**
+ * Has the user pick a file to receive into, replacing whatever was
+ * received so far. The picker needs a click, hence the button.
+ */
+async function chooseTarget(state, name, text) {
+  setText("recv-active-status", "Waiting for you to choose where to save the file.");
+  const handle = await askUser(text, "Choose where to save", () => savetarget.pick(name));
+  await storage.remove(state.id);
+  await savetarget.set(state.id, handle);
+  return handle;
+}
+
+/** The picked file from an earlier visit, once writing to it is allowed again; or a new one. */
+async function regainTarget(state, handle) {
+  if (await savetarget.permitted(handle)) return handle;
+  setText("recv-active-status", "Waiting for you to continue.");
+  let denied = false;
+  return askUser(`To carry on, allow fileporter to keep saving to ${handle.name}.`, "Continue", async () => {
+    if (!denied) {
+      if (await savetarget.requestPermission(handle)) return handle;
+      denied = true;
+      setText("recv-pick-text", `fileporter wasn't allowed to save to ${handle.name}. Choose where to save the file instead, and receiving starts over.`);
+      setText("recv-pick-label", "Choose where to save");
+      return null;
+    }
+    const h = await savetarget.pick(handle.name);
+    if (h) {
+      await storage.remove(state.id);
+      await savetarget.set(state.id, h);
+    }
+    return h;
+  });
+}
+
 async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
   show("recv-active");
@@ -467,6 +530,10 @@ async function receiverLoop(state) {
   setGuard(true);
   let progress = null;
   let stall = null;
+  // A file the user picked to receive into, for files too big for the
+  // browser's storage (see savetarget.js).
+  let target = await savetarget.get(state.id);
+  if (target) target = await regainTarget(state, target);
   setText("recv-active-status", engineReady ? "Connecting…" : "Getting ready…");
   await engine.ready;
   const iceServers = state.rm === "performance" && state.sm === "performance" ? await rtc.stunServers(config.derpMapURL) : [];
@@ -497,7 +564,7 @@ async function receiverLoop(state) {
     recvCtl = ctl;
     try {
       const res = await receiverSession(conn, {
-        state, iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
+        state, target, canPick: savetarget.available(), iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
         onProgress: (b) => { progress?.(b); stall?.progress(b); },
         onStatus: (s) => {
           if (s.phase === "hello") {
@@ -528,14 +595,32 @@ async function receiverLoop(state) {
       });
       recvCtl = null;
       stall?.stop();
+      if (target) {
+        await savedDirectly(state, target.name);
+        return;
+      }
       showSave(state, { name: res.hello.name, size: res.hello.size, type: res.hello.type });
       return;
     } catch (err) {
       recvCtl = null;
       stall?.stop();
       if (recvStopped) return;
+      if (err instanceof NeedsTargetError) {
+        target = await chooseTarget(state, err.hello.name,
+          `This file is ${fmtBytes(err.hello.size)}, too big for your browser to keep until you save it. Choose where to save it now, and it's saved there as it arrives.`);
+        attempt = -1; // redial at once
+        continue;
+      }
+      if (target && err.name === "NotFoundError") {
+        // The file being received into was moved or deleted.
+        target = await chooseTarget(state, target.name,
+          `The file fileporter was saving to (${target.name}) is gone. Choose where to save it, and receiving starts over.`);
+        attempt = -1;
+        continue;
+      }
       if (err instanceof CancelledError) {
         await storage.remove(state.id).catch(() => {});
+        await savetarget.discard(state.id);
         setGuard(false);
         frag.scrub();
         setText("cancelled-text", err.message);
@@ -563,6 +648,7 @@ $("recv-cancel").onclick = async () => {
   await recvCtl?.cancel?.();
   const f = frag.decode();
   if (f) await storage.remove(f.state.id).catch(() => {});
+  if (f) await savetarget.discard(f.state.id);
   setGuard(false);
   frag.scrub();
   setText("cancelled-text", "You cancelled the transfer, and the partly received file was deleted.");
@@ -642,6 +728,13 @@ function showSave(state, meta) {
   $("recv-clear").onclick = () => clearReceived(state, "fileporter's temporary copy was removed.");
 }
 
+/** Received into a picked file: nothing left to save. */
+async function savedDirectly(state, name) {
+  setGuard(false);
+  await savetarget.forget(state.id);
+  await clearReceived(state, `Saved to ${name}. The file arrived and was verified.`);
+}
+
 async function clearReceived(state, message) {
   if (downloadURL) { URL.revokeObjectURL(downloadURL); downloadURL = null; }
   await storage.remove(state.id);
@@ -672,7 +765,8 @@ async function receiver(state) {
   // straight to saving, no network needed.
   const existing = await storage.peek(state.id);
   if (existing.exists && existing.meta?.status === "complete") {
-    showSave(state, existing.meta);
+    if (existing.meta.direct) await savedDirectly(state, (await savetarget.get(state.id))?.name || existing.meta.name);
+    else showSave(state, existing.meta);
     return;
   }
 

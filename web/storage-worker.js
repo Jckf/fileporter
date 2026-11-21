@@ -17,6 +17,15 @@
 // Older Safari versions return promises from sync-handle methods, so
 // every call is awaited.
 //
+// Direct mode (see savetarget.js): the data goes to a file the user
+// picked instead, and only hashes.bin and meta.json live here. Writes
+// to such a file go through a FileSystemWritableFileStream, which in
+// Chromium writes to a temporary copy and only replaces the file on
+// close(). So "on disk" there means committed: hashes.bin can run ahead
+// of the file, and settle() takes the smaller of the two as usual.
+// Reopening a stream copies the file first, so commits are spaced out
+// (see COMMIT_MIN); a crash loses at most the uncommitted part.
+//
 // Cleanup is driven by the page (cancel, confirmed save) and by
 // sweep(): a directory is deleted only when no tab holds its Web Lock
 // AND its lastActive heartbeat is older than the grace period, so a
@@ -26,8 +35,10 @@
 
 const ROOT = "fileporter";
 const HEARTBEAT_MS = 30_000;
-const open = new Map(); // id → {dir, data, hashes, meta: handle, metaObj, chunkSize}
+const COMMIT_MIN = 512 * 1024 * 1024; // commit when this, and as much as is committed, is pending
+const open = new Map(); // id → {dir, data, hashes, meta: handle, metaObj, target, w, wSize, committed}
 let writeLimit = 0; // testing only (?writelimit): simulated full disk
+let commitEvery = 0; // testing only (?commit): commit this often instead
 
 async function rootDir() {
   return (await navigator.storage.getDirectory()).getDirectoryHandle(ROOT, { create: true });
@@ -54,6 +65,10 @@ async function readMetaHandle(h) {
 }
 
 async function closeHandles(st, which = ["data", "hashes", "meta"]) {
+  if (st.w && which.includes("data")) {
+    try { await st.w.abort(); } catch {}
+    st.w = null;
+  }
   for (const k of which) {
     if (st[k]) {
       try { await st[k].close(); } catch {}
@@ -67,13 +82,64 @@ async function syncHandle(dir, name) {
   return fh.createSyncAccessHandle();
 }
 
+// The data file, in OPFS (a sync handle in st.data) or the picked file
+// (st.target, written through st.w while open).
+
+async function dataSize(st) {
+  if (!st.target) return st.data.getSize();
+  if (st.w) return st.wSize;
+  return (await st.target.getFile()).size;
+}
+
+async function writable(st) {
+  if (!st.w) {
+    st.committed = (await st.target.getFile()).size;
+    st.w = await st.target.createWritable({ keepExistingData: true });
+    st.wSize = st.committed;
+  }
+  return st.w;
+}
+
+async function dataWrite(st, bytes, at) {
+  if (!st.target) {
+    await st.data.write(bytes, { at });
+    await st.data.flush();
+    return;
+  }
+  const w = await writable(st);
+  await w.write({ type: "write", position: at, data: bytes });
+  st.wSize = Math.max(st.wSize, at + bytes.length);
+  const pending = st.wSize - st.committed;
+  if (commitEvery ? pending >= commitEvery : pending >= COMMIT_MIN && pending >= st.committed) await commit(st);
+}
+
+async function dataTruncate(st, size) {
+  if (!st.target) {
+    await st.data.truncate(size);
+    await st.data.flush();
+    return;
+  }
+  if ((await dataSize(st)) === size) return;
+  await (await writable(st)).truncate(size);
+  st.wSize = size;
+}
+
+/** Puts what was written into the picked file. */
+async function commit(st) {
+  if (!st.w) return;
+  const w = st.w;
+  st.w = null;
+  await w.close();
+  st.committed = st.wSize;
+}
+
 /** Number of chunks safely on disk; truncates any partial tail. */
 async function settle(st) {
   const { size, chunkSize } = st.metaObj;
   const total = Math.ceil(size / chunkSize);
-  const dataSize = await st.data.getSize();
+  const dataSize_ = await dataSize(st);
   const hashCount = Math.floor((await st.hashes.getSize()) / 32);
-  const dataChunks = dataSize >= size ? total : Math.floor(dataSize / chunkSize);
+  const dataChunks = dataSize_ >= size ? total : Math.floor(dataSize_ / chunkSize);
   const n = Math.min(hashCount, dataChunks, total);
   await truncateTo(st, n);
   return n;
@@ -81,8 +147,7 @@ async function settle(st) {
 
 async function truncateTo(st, n) {
   const { size, chunkSize } = st.metaObj;
-  await st.data.truncate(Math.min(size, n * chunkSize));
-  await st.data.flush();
+  await dataTruncate(st, Math.min(size, n * chunkSize));
   await st.hashes.truncate(n * 32);
   await st.hashes.flush();
 }
@@ -140,10 +205,12 @@ const ops = {
 
   /**
    * Opens (creating if needed) the transfer for {name, size, type,
-   * chunkSize}. If stored metadata describes a different file, the
-   * partial data is discarded. Returns {chunks, lastHash, status}.
+   * chunkSize}, writing the data to `target` (a picked file) if given.
+   * If stored metadata describes a different file, or the data was
+   * going elsewhere, the partial data is discarded. Returns {chunks,
+   * lastHash, status}.
    */
-  async open({ id, info }) {
+  async open({ id, info, target = null }) {
     let st = open.get(id);
     if (!st) {
       const dir = await (await rootDir()).getDirectoryHandle(id, { create: true });
@@ -152,10 +219,15 @@ const ops = {
       st.metaObj = await readMetaHandle(st.meta);
       open.set(id, st);
     }
+    if (target && !(st.target && (await st.target.isSameEntry(target)))) {
+      await closeHandles(st, ["data"]);
+      st.target = target;
+    }
     const m = st.metaObj;
-    const same = m && m.size === info.size && m.name === info.name && m.chunkSize === info.chunkSize;
+    const same = m && m.size === info.size && m.name === info.name && m.chunkSize === info.chunkSize &&
+      !!m.direct === !!target;
     if (!same) {
-      st.metaObj = { v: 1, id, ...info, status: "receiving", createdAt: Date.now(), lastActive: Date.now() };
+      st.metaObj = { v: 1, id, ...info, direct: !!target, status: "receiving", createdAt: Date.now(), lastActive: Date.now() };
     }
     if (st.metaObj.status === "complete") {
       // Data is final; keep handles closed so the page can read it.
@@ -163,7 +235,7 @@ const ops = {
       await writeMeta(st);
       return { chunks: Math.ceil(st.metaObj.size / st.metaObj.chunkSize), lastHash: null, status: "complete" };
     }
-    if (!st.data) st.data = await syncHandle(st.dir, "data");
+    if (!st.data && !st.target) st.data = await syncHandle(st.dir, "data");
     if (!st.hashes) st.hashes = await syncHandle(st.dir, "hashes.bin");
     if (!same) await truncateTo(st, 0);
     await writeMeta(st);
@@ -189,8 +261,7 @@ const ops = {
       throw new DOMException("Simulated full storage (?writelimit)", "QuotaExceededError");
     }
     const hash = await sha256(bytes);
-    await st.data.write(bytes, { at: idx * chunkSize });
-    await st.data.flush();
+    await dataWrite(st, bytes, idx * chunkSize);
     await st.hashes.write(hash, { at: idx * 32 });
     await st.hashes.flush();
   },
@@ -207,6 +278,7 @@ const ops = {
   /** Marks the transfer complete and releases the data for reading. */
   async complete({ id }) {
     const st = requireOpen(id);
+    if (st.target) await commit(st);
     st.metaObj.status = "complete";
     await writeMeta(st);
     await closeHandles(st, ["data", "hashes"]);
@@ -267,6 +339,7 @@ const ops = {
   /** Testing only. */
   async configure(args) {
     writeLimit = args.writeLimit || 0;
+    commitEvery = args.commitEvery || 0;
   },
 
   async estimate() {

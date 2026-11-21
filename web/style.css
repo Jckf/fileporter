@@ -339,6 +339,9 @@ details.explain p { margin: 8px 0 0; }
 .stall p { margin: 0 0 10px; }
 .stall p.muted { margin: 10px 0 0; color: var(--muted); }
 .stall code { font-size: 0.8rem; overflow-wrap: anywhere; user-select: all; }
+/* Asking where to save a file too big for the browser's storage. */
+.pick { margin: 12px 0; padding: 14px; border-radius: var(--radius-sm); background: var(--accent-soft); }
+.pick p { margin: 0 0 12px; }
 .transfer-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; min-height: 28px; }
 .status { font-weight: 500; }
 .badge {
