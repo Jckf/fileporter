@@ -437,6 +437,20 @@ tests["resume-sender-reload"] = async (p) => {
   if (sha(got) !== hash) throw new Error("hash mismatch after sender resume");
 };
 
+tests["resume-sender-cancel"] = async (p) => {
+  // Reopened without the file: cancelling there forgets the transfer.
+  const { file } = mkFile(1 * MiB);
+  await p.startSender(file, "privacy");
+  await p.sender.reload();
+  await p.sender.locator("#send-resume").waitFor();
+  await p.sender.click("#send-resume-cancel");
+  await p.sender.locator("#cancelled").waitFor();
+  const hash = await p.sender.evaluate(() => location.hash);
+  if (hash) throw new Error(`link kept after cancelling: ${hash}`);
+  await p.sender.reload();
+  await p.sender.locator("#send-new").waitFor();
+};
+
 tests["cancel-by-receiver"] = async (p) => {
   const { file } = mkFile(24 * MiB);
   const link = await p.startSender(file, "privacy");

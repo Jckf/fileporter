@@ -357,6 +357,15 @@ $("send-cancel").onclick = async () => {
   show("cancelled");
 };
 
+// Nothing is connected yet here, so the recipient can't be told.
+$("send-resume-cancel").onclick = () => {
+  resumeWith = null;
+  frag.scrub();
+  nativefile.retain(null);
+  setText("cancelled-text", "You cancelled the transfer. If the recipient is still waiting, let them know it won't continue.");
+  show("cancelled");
+};
+
 async function senderResume(state) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
   resumeWith = async (file) => {
@@ -365,7 +374,7 @@ async function senderResume(state) {
       return false;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
-    whenReady(() => startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")));
+    whenReady(() => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")));
     return true;
   };
   $("send-resume-file").onchange = () => {
