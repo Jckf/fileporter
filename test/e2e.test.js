@@ -437,6 +437,27 @@ tests["resume-sender-reload"] = async (p) => {
   if (sha(got) !== hash) throw new Error("hash mismatch after sender resume");
 };
 
+tests["relay-nearest"] = async (p) => {
+  // Every relay but Frankfurt (303) answers its latency check slowly:
+  // the sender must put the transfer on Frankfurt.
+  await p.sctx.route(/\/derp\/latency-check$/, async (route) => {
+    if (!route.request().url().includes("tc303a.")) await new Promise((r) => setTimeout(r, 600));
+    await route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*" }, body: "" });
+  });
+  const hosts = [];
+  p.sctx.on("websocket", (ws) => hosts.push(new URL(ws.url()).host));
+  p.sender.on("websocket", (ws) => hosts.push(new URL(ws.url()).host));
+  const { file, hash } = mkFile(1 * MiB + 3);
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(link, "privacy");
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch");
+  const used = p.logs.filter((l) => l.includes("websocket: connected to")).map((l) => l.replace(/.*connected to /, ""));
+  if (!used.length && !hosts.length) throw new Error("couldn't tell which relay was used");
+  const all = [...used, ...hosts];
+  if (!all.every((h) => h.includes("tc303a."))) throw new Error(`used ${all.join(", ")}, want tc303a`);
+  return [...new Set(all)].join(", ");
+};
+
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);

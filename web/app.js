@@ -21,6 +21,7 @@ import * as notify from "./notify.js";
 import * as scan from "./scan.js";
 import * as platform from "./platform.js";
 import "./edgefade.js";
+import * as relay from "./relay.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id) => {
@@ -137,7 +138,10 @@ function showPickedFile() {
   setText("drop-error", "");
   $("dropzone").hidden = !!file;
   $("send-file-card").hidden = !file;
-  if (file) ui.fillFileCard($("send-file-card"), file);
+  if (file) {
+    ui.fillFileCard($("send-file-card"), file);
+    nearestRegion();
+  }
   updateStartButton();
 }
 
@@ -319,6 +323,12 @@ function senderStartFailed(err, errorId) {
   return true;
 }
 
+// The relay nearest this device, measured once (relay.js); started when
+// a file is chosen (not before: no requests to the relays until then),
+// so it's usually known by "Create link".
+let regionP = null;
+const nearestRegion = () => (regionP ||= relay.nearestRegion(config.derpMapURL));
+
 $("send-start").onclick = async () => {
   const file = chosenFile();
   const mode = pickedMode("send-mode");
@@ -327,7 +337,7 @@ $("send-start").onclick = async () => {
   $("send-start").textContent = "Creating link…";
   try {
     if (mode === "privacy") rtc.lockOutWebRTC();
-    const s = await engine.newSession({ derpMapURL: config.derpMapURL });
+    const s = await engine.newSession({ derpMapURL: config.derpMapURL, regionID: await nearestRegion() });
     const state = {
       id: frag.newTransferId(),
       sk: s.senderKey, a: s.addr, rk: s.receiverKey, rp: s.receiverPub,

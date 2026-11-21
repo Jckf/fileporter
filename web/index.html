@@ -11,7 +11,7 @@
        X-Frame-Options either, so framing is possible but harmless: the
        session keys are in the URL fragment, which a framing page sets
        itself and can't read from us.
-       connect-src needs https: for the DERP map and wss: for the relays;
+       connect-src needs https: for the DERP map and timing the relays, and wss: for the relays;
        'wasm-unsafe-eval' lets WebAssembly compile without allowing eval. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' https: wss:; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="description" content="Send files straight to someone else's device. End-to-end encrypted, nothing stored on a server.">

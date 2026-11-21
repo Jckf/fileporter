@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/tailscale/tailcat"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 )
@@ -71,12 +72,21 @@ func tsNewSession(this js.Value, args []js.Value) any {
 		return rejectedPromise(errors.New("tsNewSession requires an options object"))
 	}
 	derpMapURL := optString(args[0], "derpMapURL")
+	// The relay region nearest the sender, measured by the page (here,
+	// in a browser, tailcat can only pick one at random); 0 if unknown.
+	regionID := 0
+	if v := args[0].Get("regionID"); v.Type() == js.TypeNumber {
+		regionID = v.Int()
+	}
 	return makePromise(func() (any, error) {
 		if derpMapURL == "" {
 			return nil, errors.New("derpMapURL is required")
 		}
 		pk := tailcat.NewPrivateKey()
 		pk.Public.RegionID = -1 // auto-select below
+		if regionID > 0 {
+			pk.Public.RegionID = tailcfg.DERPRegionID(regionID)
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
