@@ -368,10 +368,19 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 		if len(args) != 1 || !args[0].InstanceOf(uint8Array) {
 			return rejectedPromise(errors.New("write requires a Uint8Array"))
 		}
-		b := make([]byte, args[0].Get("length").Int())
+		// The copy can't be skipped (Go can't see JavaScript's memory),
+		// but its buffer can be reused: Write doesn't keep it.
+		n := args[0].Get("length").Int()
+		bp := writeBufs.Get().(*[]byte)
+		if cap(*bp) < n {
+			*bp = make([]byte, n)
+		}
+		b := (*bp)[:n]
 		js.CopyBytesToGo(b, args[0])
 		return makePromise(func() (any, error) {
-			if _, err := c.Write(b); err != nil {
+			_, err := c.Write(b)
+			writeBufs.Put(bp)
+			if err != nil {
 				return nil, err
 			}
 			return js.Undefined(), nil
@@ -415,6 +424,11 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 }
 
 var uint8Array = js.Global().Get("Uint8Array")
+
+// writeBufs holds the buffers Conn writes copy into, one per write in
+// flight. Each grows to the largest write it has carried (a frame,
+// during a transfer); the pool drops them when idle across GCs.
+var writeBufs = sync.Pool{New: func() any { return new([]byte) }}
 
 // closedMethod and closedClose replace a closed Conn's (or Listener's)
 // methods. They're shared, so they hold on to nothing.

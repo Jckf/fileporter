@@ -1,14 +1,17 @@
 // Copyright (c) 2026 Jim C K Flaten
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Checks that bad input from JavaScript is rejected instead of
-// panicking, which would kill the engine. Needs node to run:
+// Checks the JavaScript boundary: bad input is rejected instead of
+// panicking (which would kill the engine), closing a Conn is safe, and
+// writes arrive intact. Needs node to run:
 //
 //	GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/engine
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"strings"
 	"syscall/js"
@@ -94,6 +97,33 @@ func TestConn(t *testing.T) {
 	for _, m := range []string{"read", "write", "closeWrite"} {
 		if _, err := await(t, jc.Call(m, u8)); err == "" {
 			t.Errorf("%s after close: resolved, want an error", m)
+		}
+	}
+}
+
+// Writes of varying sizes reuse pooled buffers; each must arrive whole.
+func TestWrite(t *testing.T) {
+	a, b := net.Pipe()
+	jc := makeJSConn(a, 1, nil)
+	defer jc.Call("close")
+	defer b.Close()
+	for _, n := range []int{3, 100 << 10, 5, 200 << 10, 7} {
+		want := make([]byte, n)
+		for i := range want {
+			want[i] = byte(n + i)
+		}
+		u8 := uint8Array.New(n)
+		js.CopyBytesToJS(u8, want)
+		p := jc.Call("write", u8)
+		got := make([]byte, n)
+		if _, err := io.ReadFull(b, got); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := await(t, p); err != "" {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("write of %d bytes arrived changed", n)
 		}
 	}
 }
