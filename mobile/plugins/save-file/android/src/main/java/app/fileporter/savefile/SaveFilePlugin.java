@@ -16,7 +16,6 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import java.io.BufferedOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -76,7 +75,9 @@ public class SaveFilePlugin extends Plugin {
         getBridge().execute(() -> {
             try {
                 String id = UUID.randomUUID().toString();
-                open.put(id, new Target(uri, new BufferedOutputStream(openOutput(uri), 1 << 20)));
+                // Not buffered: the page writes megabytes at a time, which a
+                // buffer would pass straight through anyway.
+                open.put(id, new Target(uri, openOutput(uri)));
                 JSObject ret = new JSObject();
                 ret.put("id", id);
                 call.resolve(ret);
