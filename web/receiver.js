@@ -186,10 +186,7 @@ async function receiverLoop(state) {
         onStatus: (s) => {
           if (s.phase === "hello") {
             attempt = -1; // got going: redial at once if this drops
-            setText("recv-active-file", s.hello.name);
-            $("recv-active-file").title = s.hello.name;
-            setText("recv-active-size", fmtBytes(s.hello.size));
-            setText("recv-active-ext", ui.fileExt(s.hello.name));
+            ui.fillFileCard($("recv-active").querySelector(".file-card"), s.hello);
             progress = ui.progressView("recv-progress", "recv-progress-text", s.hello.size);
             // Reconnecting drops this session, and the loop redials at once.
             stall ||= stallWatch("recv", s.hello.size, () => recvCtl?.stop?.());

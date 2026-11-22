@@ -235,9 +235,7 @@ async function startSender(state, file) {
   setText("send-active-effective", state.m === "performance"
     ? "You chose Fast. It's only used if the recipient also chooses Fast."
     : "You chose Private. The recipient won't see your IP address.");
-  setText("send-active-file", file.name);
-  setText("send-active-size", fmtBytes(file.size));
-  setText("send-active-ext", ui.fileExt(file.name));
+  ui.fillFileCard($("send-active").querySelector(".file-card"), file);
   setText("send-active-status", "Starting…");
   $("send-invite").hidden = true; // until setupShare: there's no link yet
   const shown = ui.progressView("send-progress", "send-progress-text", file.size);
