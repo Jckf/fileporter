@@ -347,15 +347,13 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     });
     const { fromChunk, turn: senderTurn } = await link.next("start");
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
-    // A file we already have in full is only ever finished, not received
-    // again: the sender starting over means its file changed.
     // A file we already have in full whose sender's file changed since
     // (seen as it starting over, or as the final check failing): keep
     // ours, and cancel so the sender stops too rather than retry or wait
-    // for us. (Over the link: the peer watches it throughout.)
+    // for us. ctl.cancel(), so the cancel arrives before the direct
+    // connection, if any, closes (see there).
     const fileChanged = async () => {
-      await link.send({ t: "cancel" }).catch(() => {});
-      await end();
+      await ctl.cancel();
       return new FatalError(FILE_CHANGED);
     };
     if (st.status === "complete" && fromChunk !== st.chunks) throw await fileChanged();
