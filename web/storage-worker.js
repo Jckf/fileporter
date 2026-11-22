@@ -36,7 +36,7 @@
 const ROOT = "fileporter";
 const HEARTBEAT_MS = 30_000;
 const COMMIT_MIN = 512 * 1024 * 1024; // commit when this, and as much as is committed, is pending
-const open = new Map(); // id → {dir, data, hashes, meta: handle, metaObj, target, w, wSize, committed}
+const transfers = new Map(); // open transfers: id → {dir, data, hashes, meta: handle, metaObj, target, w, wSize, committed}
 let writeLimit = 0; // testing only (?writelimit): simulated full disk
 let commitEvery = 0; // testing only (?commit): commit this often instead
 
@@ -152,9 +152,9 @@ async function commit(st) {
 async function settle(st) {
   const { size, chunkSize } = st.metaObj;
   const total = Math.ceil(size / chunkSize);
-  const dataSize_ = await dataSize(st);
+  const bytes = await dataSize(st);
   const hashCount = Math.floor((await st.hashes.getSize()) / 32);
-  const dataChunks = dataSize_ >= size ? total : Math.floor(dataSize_ / chunkSize);
+  const dataChunks = bytes >= size ? total : Math.floor(bytes / chunkSize);
   const n = Math.min(hashCount, dataChunks, total);
   await truncateTo(st, n);
   return n;
@@ -175,7 +175,7 @@ async function lastHash(st, n) {
 }
 
 function requireOpen(id) {
-  const st = open.get(id);
+  const st = transfers.get(id);
   if (!st) throw new Error(`transfer ${id} is not open`);
   return st;
 }
@@ -226,13 +226,13 @@ const ops = {
    * lastHash, status}.
    */
   async open({ id, info, target = null }) {
-    let st = open.get(id);
+    let st = transfers.get(id);
     if (!st) {
       const dir = await (await rootDir()).getDirectoryHandle(id, { create: true });
       st = { dir, data: null, hashes: null, meta: null, metaObj: null };
       st.meta = await syncHandle(dir, "meta.json");
       st.metaObj = await readMetaHandle(st.meta);
-      open.set(id, st);
+      transfers.set(id, st);
     }
     if (target && !(st.target && (await st.target.isSameEntry(target)))) {
       await closeHandles(st, ["data"]);
@@ -308,10 +308,10 @@ const ops = {
   },
 
   async remove({ id }) {
-    const st = open.get(id);
+    const st = transfers.get(id);
     if (st) {
       await closeHandles(st);
-      open.delete(id);
+      transfers.delete(id);
     }
     try {
       await (await rootDir()).removeEntry(id, { recursive: true });
@@ -329,7 +329,7 @@ const ops = {
     const held = new Set(((await navigator.locks.query()).held || []).map((l) => l.name));
     const removed = [];
     for await (const [name, handle] of root.entries()) {
-      if (handle.kind !== "directory" || name === keep || open.has(name)) continue;
+      if (handle.kind !== "directory" || name === keep || transfers.has(name)) continue;
       if (held.has(`fileporter:${name}`)) continue;
       let lastActive = 0;
       try {
@@ -369,7 +369,7 @@ let chain = Promise.resolve();
 
 setInterval(() => {
   chain = chain.then(async () => {
-    for (const st of open.values()) {
+    for (const st of transfers.values()) {
       try { if (st.meta) await writeMeta(st); } catch {}
     }
   });

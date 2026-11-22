@@ -164,7 +164,8 @@ function endSend() {
 // stands in for the input's.
 let nativeChosen = null;
 const chosenFile = () => nativeChosen ?? $("send-file").files[0];
-function choose(file) {
+/** Uses the app's file (null: the input's, as picked or dropped). */
+function setNativeFile(file) {
   nativeChosen = file;
   showPickedFile();
 }
@@ -189,7 +190,7 @@ function showPickedFile() {
   updateStartButton();
 }
 
-$("send-file").onchange = () => choose(null);
+$("send-file").onchange = () => setNativeFile(null);
 $("send-file-clear").onclick = () => {
   $("send-file").value = "";
   nativeChosen = null;
@@ -252,7 +253,7 @@ function nativePicker(input, onFile, errorId) {
 }
 let resumeWith = null; // set by senderResume
 if (nativefile.picks()) {
-  nativePicker($("send-file"), choose, "drop-error");
+  nativePicker($("send-file"), setNativeFile, "drop-error");
   nativePicker($("send-resume-file"), (file) => resumeWith?.(file), "send-resume-error");
 }
 whenReady(updateStartButton);
@@ -982,7 +983,7 @@ if (!location.hash) {
       }
     };
   }
-  choose(shared?.file ?? null);
+  setNativeFile(shared?.file ?? null);
   if (shared?.error) setText("drop-error", shared.error);
   startSweeping(null);
 } else if (!f) {
