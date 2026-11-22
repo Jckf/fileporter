@@ -5,8 +5,10 @@
 // over the tailcat Link (relay); after that, over the chosen transport.
 //
 //   S→R {t:"hello", v, id, mode, name, size, type, chunkSize}
-//   R→S {t:"resume", id, mode, fromChunk, prevHash}
+//   R→S {t:"resume", id, mode, fromChunk, prevHash, lanes?}
 //         prevHash = SHA-256 of chunk fromChunk-1 as the receiver stored it
+//         lanes: how many peer connections the receiver accepts (absent
+//         from receivers that predate lanes: then just one)
 //   S→R {t:"start", fromChunk, turn?}
 //         the sender's answer: fromChunk, or 0 if prevHash doesn't match
 //         its file (the file changed between sessions). turn: the
@@ -15,7 +17,11 @@
 //   … mode negotiation: privacy if either side chose privacy; only in
 //     performance mode: {t:"rtc"/"ice"} signaling over the Link …
 //   S→R {t:"transport", via:"rtc"|"relay"}               (sender decides)
-//   S→R chunk i … (at most WINDOW unacknowledged)
+//   … if the direct connection goes through a TURN relay: the sender
+//     opens more peer connections ("lanes", transport.js), signaled
+//     like the first but marked {l} (rtc.signalLanes), and uses each
+//     as it comes up. Chunks may then arrive out of order …
+//   S→R chunk i … (at most windowFor(transport) unacknowledged)
 //   R→S {t:"ack", idx}       after chunk idx is durably stored
 //   S→R {t:"done", root}     root = SHA-256(H0 ‖ H1 ‖ … ‖ Hn-1)
 //   R→S {t:"complete", ok, root}
@@ -36,6 +42,16 @@ import * as turn from "./turn.js";
 export const PROTOCOL_VERSION = 1;
 export const CHUNK = 1 << 20;
 const WINDOW = 8;
+// Peer connections for a relayed direct connection (see transport.js:
+// one manages ~10 Mbit/s through a relay; eight, ~80), and the
+// unacknowledged chunks allowed per lane, so each keeps one in flight
+// while the others' acks come back.
+const LANES = 8;
+const WINDOW_PER_LANE = 3;
+const windowFor = (transport) => Math.max(WINDOW, WINDOW_PER_LANE * (transport.lanes?.length || 1));
+// How far ahead of the next chunk it needs the receiver holds chunks
+// that arrived early on another lane.
+const MAX_AHEAD = WINDOW_PER_LANE * LANES * 2;
 
 export const chunkCount = (size) => Math.ceil(size / CHUNK);
 const chunkLenFor = (size) => (idx) => Math.min(CHUNK, size - idx * CHUNK);
@@ -128,11 +144,13 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     onStatus({ phase: "negotiated", effective, peerMode: resume.mode, fromChunk: from });
 
     let relayed = false;
+    let lanes = null;
     if (effective === "performance") {
+      lanes = rtc.signalLanes(link.signal(), LANES);
       try {
         const { pc, dc } = await rtc.connect({
           localMode: state.m, effectiveMode: effective, offerer: true,
-          signal: link.signal(), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
+          signal: lanes.lane(0), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
         });
         transport = new RtcTransport(pc, dc, chunkLenFor(file.size));
         relayed = ownTurn.length > 0 && (await rtc.usesRelay(pc));
@@ -142,6 +160,19 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     }
     await link.send({ t: "transport", via: transport.via });
     onStatus({ phase: "transport", via: transport.via, turn: relayed });
+
+    // Through a TURN relay, more lanes; the transfer starts on the
+    // first and spreads out as the others come up.
+    if (relayed) {
+      const want = Math.min(LANES, Number.isInteger(resume.lanes) ? resume.lanes : 1);
+      const rtcTransport = transport;
+      for (let l = 1; l < want; l++) {
+        rtc.connect({
+          localMode: state.m, effectiveMode: effective, offerer: true,
+          signal: lanes.lane(l), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
+        }).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
+      }
+    }
 
     // Acks, completion and cancellation arrive on the transport while
     // we send; a small state machine shared with the send loop.
@@ -186,7 +217,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     onProgress(Math.min(file.size, from * CHUNK));
     try {
       for (let i = from; i < n; i++) {
-        await until(() => i - acked < WINDOW);
+        await until(() => i - acked < windowFor(transport));
         const bytes = await readChunk(file, i);
         hashes.set(i, await sha256(bytes));
         await transport.sendChunk(i, bytes);
@@ -258,7 +289,10 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     // Our fragment is authoritative for the mode we agreed to; a sender
     // claiming something weaker now doesn't change it.
     const senderMode = effectiveMode(state.sm, hello.mode);
-    await link.send({ t: "resume", id: state.id, mode: state.rm, fromChunk: st.chunks, prevHash: st.lastHash });
+    await link.send({
+      t: "resume", id: state.id, mode: state.rm, fromChunk: st.chunks, prevHash: st.lastHash,
+      ...(state.rm === "performance" ? { lanes: LANES } : {}),
+    });
     const { fromChunk, turn: senderTurn } = await link.next("start");
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
@@ -267,13 +301,16 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     onStatus({ phase: "negotiated", effective, peerMode: senderMode, fromChunk });
 
     let attempt = null;
+    let lanes = null;
+    // The sender's TURN servers, if any: only ever here, where both
+    // chose performance (and WebRTC is locked out otherwise anyway).
+    const rtcOptions = (l) => ({
+      localMode: state.rm, effectiveMode: effective, offerer: false,
+      signal: lanes.lane(l), iceServers: [...iceServers, ...turn.sanitize(senderTurn)], timeoutMs: iceTimeoutMs + 5000,
+    });
     if (effective === "performance") {
-      // The sender's TURN servers, if any: only ever here, where both
-      // chose performance (and WebRTC is locked out otherwise anyway).
-      attempt = rtc.connect({
-        localMode: state.rm, effectiveMode: effective, offerer: false,
-        signal: link.signal(), iceServers: [...iceServers, ...turn.sanitize(senderTurn)], timeoutMs: iceTimeoutMs + 5000,
-      });
+      lanes = rtc.signalLanes(link.signal(), LANES);
+      attempt = rtc.connect(rtcOptions(0));
       attempt.catch(() => {}); // the sender's transport decision is what counts
     }
     const { via } = await link.next("transport");
@@ -281,14 +318,21 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     if (via === "rtc") {
       if (!attempt) throw new FatalError("The sender tried to connect directly, but you chose Private. The transfer was stopped to keep your IP address hidden.");
       const { pc, dc } = await attempt;
-      transport = new RtcTransport(pc, dc, chunkLenFor(hello.size));
+      const rtcTransport = new RtcTransport(pc, dc, chunkLenFor(hello.size));
+      transport = rtcTransport;
       relayed = senderTurn != null && (await rtc.usesRelay(pc));
+      // More lanes, as the sender opens them (see senderSession).
+      lanes.onNewLane = (l) => {
+        rtc.connect(rtcOptions(l)).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
+      };
     } else {
       attempt?.then(({ pc }) => pc.close(), () => {});
     }
     onStatus({ phase: "transport", via, turn: relayed });
 
     let have = fromChunk;
+    // Chunks that arrived ahead of `have` on another lane.
+    const early = new Map();
     onProgress(Math.min(hello.size, have * CHUNK));
     while (have < n) {
       const ev = await transport.nextEvent();
@@ -296,11 +340,17 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
         if (ev.msg.t === "cancel") throw new CancelledError("The sender cancelled the transfer.");
         continue;
       }
-      if (ev.idx !== have) throw new Error(`chunk ${ev.idx} out of order (want ${have})`);
-      await storage.write(state.id, ev.idx, ev.bytes);
-      have++;
-      await transport.send({ t: "ack", idx: ev.idx });
-      onProgress(Math.min(hello.size, have * CHUNK));
+      if (ev.idx < have || ev.idx >= Math.min(n, have + MAX_AHEAD) || early.has(ev.idx)) {
+        throw new Error(`chunk ${ev.idx} out of order (want ${have})`);
+      }
+      early.set(ev.idx, ev.bytes);
+      for (let bytes; (bytes = early.get(have)); ) {
+        early.delete(have);
+        await storage.write(state.id, have, bytes);
+        await transport.send({ t: "ack", idx: have });
+        have++;
+        onProgress(Math.min(hello.size, have * CHUNK));
+      }
     }
 
     onStatus({ phase: "verifying" });

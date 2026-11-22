@@ -151,10 +151,19 @@ export class Link extends EventQueue {
     this.close();
   }
 }
-
 // Data channel messages: string = control JSON; binary =
 // [u32 chunk index][u32 offset in chunk][bytes]. 64 KiB per message is
 // the size every engine accepts.
+//
+// Lanes: a transport can run over several peer connections at once
+// (addLane), each with one data channel. Through a TURN relay one
+// connection's data channel manages only ~10–20 Mbit/s: it sends little
+// before waiting for acknowledgements, and the relay adds latency.
+// Connections don't share that limit, so more lanes add up. Each chunk
+// travels whole on one lane (the least busy); the receiver reassembles
+// per lane and puts chunks back in order (session.js). Control messages
+// go on the first lane. Losing any lane closes the transport: chunks in
+// flight on it are gone, and the session resumes where it left off.
 const PIECE = 65536 - 8;
 const HIGH_WATER = 4 << 20;
 const LOW_WATER = 1 << 20;
@@ -163,23 +172,34 @@ export class RtcTransport extends EventQueue {
   constructor(pc, dc, chunkLen) {
     super();
     this.via = "rtc";
-    this.pc = pc;
-    this.dc = dc;
     this.chunkLen = chunkLen;
-    this.asm = null;
+    this.lanes = [];
+    this.addLane(pc, dc);
+    this.startLiveness(() => { try { this.dc.send('{"t":"ping"}'); } catch {} });
+  }
+  /** The first lane, which carries control messages. */
+  get pc() { return this.lanes[0].pc; }
+  get dc() { return this.lanes[0].dc; }
+  /** Adds a connected peer connection and its open data channel. */
+  addLane(pc, dc) {
+    if (this.err) {
+      try { pc.close(); } catch {}
+      return;
+    }
+    const lane = { pc, dc, asm: null };
+    this.lanes.push(lane);
     dc.bufferedAmountLowThreshold = LOW_WATER;
     dc.onclose = () => this.close(new Error("direct connection closed"));
     pc.addEventListener("connectionstatechange", () => {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") this.close(new Error("direct connection lost"));
     });
-    dc.takeOver((d) => this.onData(d));
-    this.startLiveness(() => { try { this.dc.send('{"t":"ping"}'); } catch {} });
+    dc.takeOver((d) => this.onData(lane, d));
   }
   timedOut() {
     super.timedOut();
     this.shutdown();
   }
-  onData(d) {
+  onData(lane, d) {
     this.lastRx = Date.now();
     try {
       if (typeof d === "string") { this.push({ kind: "control", msg: JSON.parse(d) }); return; }
@@ -187,16 +207,17 @@ export class RtcTransport extends EventQueue {
       const idx = dv.getUint32(0);
       const off = dv.getUint32(4);
       const payload = new Uint8Array(d, 8);
-      if (!this.asm || this.asm.idx !== idx) {
+      if (!lane.asm || lane.asm.idx !== idx) {
         if (off !== 0) throw new Error(`chunk ${idx} started at offset ${off}`);
-        this.asm = { idx, buf: new Uint8Array(this.chunkLen(idx)), got: 0 };
+        lane.asm = { idx, buf: new Uint8Array(this.chunkLen(idx)), got: 0 };
       }
-      if (off !== this.asm.got || off + payload.length > this.asm.buf.length) throw new Error(`chunk ${idx}: bad piece at ${off}`);
-      this.asm.buf.set(payload, off);
-      this.asm.got += payload.length;
-      if (this.asm.got === this.asm.buf.length) {
-        this.push({ kind: "chunk", idx, bytes: this.asm.buf });
-        this.asm = null;
+      const asm = lane.asm;
+      if (off !== asm.got || off + payload.length > asm.buf.length) throw new Error(`chunk ${idx}: bad piece at ${off}`);
+      asm.buf.set(payload, off);
+      asm.got += payload.length;
+      if (asm.got === asm.buf.length) {
+        this.push({ kind: "chunk", idx, bytes: asm.buf });
+        lane.asm = null;
       }
     } catch (err) {
       this.close(err);
@@ -210,40 +231,59 @@ export class RtcTransport extends EventQueue {
     this.dc.send(JSON.stringify(msg));
   }
   bye() { if (!this.err) try { this.dc.send('{"t":"bye"}'); } catch {} }
+  /**
+   * Queues the whole chunk on the least busy lane, first waiting while
+   * even that one has more than HIGH_WATER queued.
+   */
   async sendChunk(idx, bytes) {
-    for (let off = 0; off < bytes.length; off += PIECE) {
+    if (this.err) throw this.err;
+    const least = () => this.lanes.reduce((a, b) => (b.dc.bufferedAmount < a.dc.bufferedAmount ? b : a));
+    let lane = least();
+    while (lane.dc.bufferedAmount > HIGH_WATER) {
+      await this.drained();
       if (this.err) throw this.err;
-      if (this.dc.bufferedAmount > HIGH_WATER) await this.drained();
+      lane = least();
+    }
+    for (let off = 0; off < bytes.length; off += PIECE) {
       const n = Math.min(PIECE, bytes.length - off);
       const m = new Uint8Array(8 + n);
       const dv = new DataView(m.buffer);
       dv.setUint32(0, idx);
       dv.setUint32(4, off);
       m.set(bytes.subarray(off, off + n), 8);
-      this.dc.send(m.buffer);
+      lane.dc.send(m.buffer);
     }
   }
+  /** Resolves when any lane's queue drops below LOW_WATER. */
   drained() {
     return new Promise((resolve, reject) => {
+      const lanes = [...this.lanes];
       const done = () => { cleanup(); resolve(); };
       const fail = () => { cleanup(); reject(this.err || new Error("direct connection closed")); };
       const cleanup = () => {
-        this.dc.removeEventListener("bufferedamountlow", done);
-        this.dc.removeEventListener("close", fail);
+        for (const { dc } of lanes) {
+          dc.removeEventListener("bufferedamountlow", done);
+          dc.removeEventListener("close", fail);
+        }
       };
-      this.dc.addEventListener("bufferedamountlow", done);
-      this.dc.addEventListener("close", fail);
+      for (const { dc } of lanes) {
+        dc.addEventListener("bufferedamountlow", done);
+        dc.addEventListener("close", fail);
+      }
     });
   }
   /** Graceful end: let queued messages drain before closing. */
   async finish() {
     const end = Date.now() + FINISH_TIMEOUT_MS;
-    while (this.dc.readyState === "open" && this.dc.bufferedAmount > 0 && Date.now() < end) await sleep(50);
+    const busy = () => this.lanes.some(({ dc }) => dc.readyState === "open" && dc.bufferedAmount > 0);
+    while (busy() && Date.now() < end) await sleep(50);
     this.shutdown();
   }
   shutdown() {
-    try { this.dc.close(); } catch {}
-    try { this.pc.close(); } catch {}
+    for (const { pc, dc } of this.lanes) {
+      try { dc.close(); } catch {}
+      try { pc.close(); } catch {}
+    }
     this.close();
   }
 }

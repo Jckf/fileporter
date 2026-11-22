@@ -69,6 +69,53 @@ export async function usesRelay(pc) {
 }
 
 /**
+ * Splits one signaling channel into lanes, one per RTCPeerConnection.
+ * Lane 0's messages are unmarked, as before lanes existed; lane l > 0
+ * marks its {t:"rtc"|"ice"} messages with l. Messages for a lane
+ * nobody listens to yet are held until someone does.
+ *
+ * lane(l)           signal adapter for rtc.connect
+ * onNewLane = fn    fn(l) once for each lane l > 0 (below maxLanes) the
+ *                   peer starts; lanes started before fn was set are
+ *                   reported when it is
+ */
+export function signalLanes(signal, maxLanes) {
+  const handlers = new Map();
+  const pending = new Map();
+  const announced = new Set();
+  let onNewLane = null;
+  const announce = (l) => {
+    if (!onNewLane || announced.has(l)) return;
+    announced.add(l);
+    onNewLane(l);
+  };
+  signal.onMessage = (m) => {
+    const l = m.l === undefined ? 0 : m.l;
+    if (!Number.isInteger(l) || l < 0 || l >= maxLanes) return;
+    const h = handlers.get(l);
+    if (h) return h(m);
+    if (!pending.has(l)) pending.set(l, []);
+    pending.get(l).push(m);
+    if (l > 0) announce(l);
+  };
+  return {
+    lane(l) {
+      return {
+        send: (m) => signal.send(l ? { ...m, l } : m),
+        set onMessage(fn) {
+          handlers.set(l, fn);
+          for (const m of pending.get(l)?.splice(0) || []) fn(m);
+        },
+      };
+    },
+    set onNewLane(fn) {
+      onNewLane = fn;
+      for (const l of pending.keys()) if (l > 0 && !handlers.has(l)) announce(l);
+    },
+  };
+}
+
+/**
  * Buffers messages from the moment the channel exists, so nothing the
  * peer sends right after open is lost. dc.takeOver(fn) replays the
  * buffer into fn and then delivers new messages to it directly.
