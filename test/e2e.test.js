@@ -98,6 +98,15 @@ const sha = (b) => createHash("sha256").update(b).digest("hex");
 //  - hide showSaveFilePicker so every engine takes the download path,
 //    which Playwright can capture
 const initScript = () => {
+  // For tests that check what the page saved: the SHA-256 (hex) of byte
+  // arrays joined in order, computed in the page.
+  window.__sha256OfParts = async (parts) => {
+    const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+    let off = 0;
+    for (const c of parts) { all.set(c, off); off += c.length; }
+    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
+    return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+  };
   window.__pcCount = 0;
   const Orig = window.RTCPeerConnection;
   if (Orig) {
@@ -437,14 +446,7 @@ tests["save-picker"] = async (p) => {
   await r.evaluate(stub, false);
   await r.click("#recv-save-btn");
   await r.locator("#recv-cleared").waitFor({ timeout: 30_000 });
-  const got = await r.evaluate(async () => {
-    const parts = window.__saved;
-    const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
-    let off = 0;
-    for (const c of parts) { all.set(c, off); off += c.length; }
-    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
-    return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
-  });
+  const got = await r.evaluate(() => window.__sha256OfParts(window.__saved));
   if (got !== hash) throw new Error("saved file hash mismatch");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
   await assertCleanedUp(p);
@@ -574,17 +576,10 @@ tests["app-save"] = async (p) => {
   await r.locator("#recv-save-btn:enabled").waitFor();
   await r.click("#recv-save-btn");
   await r.locator("#recv-cleared").waitFor({ timeout: 60_000 });
-  const got = await r.evaluate(async () => {
-    const parts = window.__save.chunks.map((b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-    const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
-    let off = 0;
-    for (const c of parts) { all.set(c, off); off += c.length; }
-    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
-    return { hash: Array.from(d, (b) => b.toString(16).padStart(2, "0")).join(""), chunks: parts.length };
-  });
-  if (got.hash !== hash) throw new Error("saved file hash mismatch");
+  const got = await r.evaluate(() => window.__sha256OfParts(window.__save.chunks.map((b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)))));
+  if (got !== hash) throw new Error("saved file hash mismatch");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
-  return `${got.chunks} chunks`;
+  return `${await r.evaluate(() => window.__save.chunks.length)} chunks`;
 };
 
 tests["download-fallback"] = async (p) => {
