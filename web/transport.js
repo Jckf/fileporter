@@ -34,6 +34,8 @@ import { FramedConn, T_CONTROL, T_DATA } from "./framing.js";
 
 const KEEPALIVE_MS = 3000;
 const PEER_TIMEOUT_MS = 12000;
+// How often the watchdog checks for PEER_TIMEOUT_MS of silence.
+const WATCHDOG_MS = 1000;
 const FINISH_TIMEOUT_MS = 3000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -54,7 +56,7 @@ class EventQueue {
     this.timers.push(setInterval(() => { if (!this.err) sendPing(); }, KEEPALIVE_MS));
     this.timers.push(setInterval(() => {
       if (Date.now() - this.lastRx > PEER_TIMEOUT_MS) this.timedOut();
-    }, 1000));
+    }, WATCHDOG_MS));
   }
   timedOut() {
     this.close(new Error("peer timed out"));

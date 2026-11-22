@@ -8,8 +8,11 @@
 
 import { plugin } from "./platform.js";
 
-// Base64 inflates each chunk by a third on its way over the bridge.
-const CHUNK = 2 << 20;
+// How much of the file goes over the native bridge per call (as base64,
+// a third bigger): enough that the per-call overhead doesn't dominate,
+// little enough to stay a modest allocation on both sides. Not the
+// transfer protocol's chunk (session.js).
+const BRIDGE_CHUNK = 2 << 20;
 
 /** True where saving goes through the app's native plugin. */
 export const available = () => !!plugin("SaveFile");
@@ -25,12 +28,12 @@ export async function save(file, { name, type }, onProgress = () => {}) {
   if (started.cancelled) return "cancelled";
   const { id } = started;
   // Read the next chunk while the current one is being written.
-  let next = file.size > 0 ? base64(file.slice(0, CHUNK)) : null;
+  let next = file.size > 0 ? base64(file.slice(0, BRIDGE_CHUNK)) : null;
   try {
-    for (let off = 0; next; off += CHUNK) {
+    for (let off = 0; next; off += BRIDGE_CHUNK) {
       const data = await next;
-      const end = off + CHUNK;
-      next = end < file.size ? base64(file.slice(end, end + CHUNK)) : null;
+      const end = off + BRIDGE_CHUNK;
+      next = end < file.size ? base64(file.slice(end, end + BRIDGE_CHUNK)) : null;
       await native.write({ id, data });
       onProgress(Math.min(end, file.size) / file.size);
     }

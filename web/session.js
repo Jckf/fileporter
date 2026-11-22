@@ -52,6 +52,15 @@ const windowFor = (transport) => Math.max(WINDOW, WINDOW_PER_LANE * (transport.l
 // How far ahead of the next chunk it needs the receiver holds chunks
 // that arrived early on another lane.
 const MAX_AHEAD = WINDOW_PER_LANE * LANES * 2;
+// The receiver keeps trying to connect directly this much longer than
+// the sender, so its attempt is still alive when the sender's decision
+// (the "transport" message, sent once the sender's own attempt ended)
+// arrives.
+const RECEIVER_ICE_GRACE_MS = 5000;
+// When sending fails, how long to let the reader catch up first: a peer
+// that cancels and then closes makes our writes fail, possibly before
+// the reader got to the cancel, and that reason should win.
+const READER_GRACE_MS = 100;
 
 export const chunkCount = (size) => Math.ceil(size / CHUNK);
 const chunkLenFor = (size) => (idx) => Math.min(CHUNK, size - idx * CHUNK);
@@ -207,7 +216,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     let failure = null;
     let wake = null;
     const notify = () => { const w = wake; wake = null; w?.(); };
-    (async () => {
+    const reading = (async () => {
       try {
         while (!complete) {
           const ev = await transport.nextEvent();
@@ -250,9 +259,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
       }
       await until(() => acked >= n);
     } catch (err) {
-      // A peer that cancels then closes makes our writes fail, possibly
-      // before the reader got to the queued cancel. Its reason wins.
-      await new Promise((r) => setTimeout(r, 100));
+      await Promise.race([reading, new Promise((r) => setTimeout(r, READER_GRACE_MS))]);
       if (failure instanceof FatalError) throw failure;
       throw err;
     }
@@ -318,7 +325,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     const theirTurn = turn.sanitize(senderTurn);
     const rtcOptions = (l) => ({
       localMode: state.rm, effectiveMode: effective, offerer: false,
-      signal: lanes.lane(l), iceServers: [...iceServers, ...theirTurn], timeoutMs: iceTimeoutMs + 5000,
+      signal: lanes.lane(l), iceServers: [...iceServers, ...theirTurn], timeoutMs: iceTimeoutMs + RECEIVER_ICE_GRACE_MS,
       abort: connecting,
     });
     if (effective === "performance") {
