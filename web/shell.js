@@ -181,6 +181,7 @@ export function showCancelled(text) {
  */
 export function copyButton(btn, text, onFail) {
   const label = btn.querySelector("span").textContent;
+  let revert = 0;
   btn.onclick = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -192,7 +193,9 @@ export function copyButton(btn, text, onFail) {
     btn.querySelector("span").textContent = "Copied";
     announce("Copied");
     btn.querySelector("use").setAttribute("href", "#i-check");
-    setTimeout(() => {
+    // From the latest click: an earlier one's timer would revert early.
+    clearTimeout(revert);
+    revert = setTimeout(() => {
       btn.classList.remove("copied");
       btn.querySelector("span").textContent = label;
       btn.querySelector("use").setAttribute("href", "#i-copy");
