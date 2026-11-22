@@ -883,6 +883,36 @@ tests["resume-retry"] = async (p) => {
   if (sha(await p.download()) !== hash) throw new Error("hash mismatch after retrying");
 };
 
+// Screen reader and keyboard: a new screen takes focus, "Copied" and a
+// lost connection are announced once, the countdown is silent, and the
+// engine's loading percentage isn't a live region.
+tests["accessibility"] = async (p) => {
+  const s = p.sender, r = p.receiver;
+  const { file } = mkFile(1 * MiB);
+  const link = await p.startSender(file, "privacy");
+  const focusedIn = (page) => page.evaluate(() => document.activeElement?.closest("main > section")?.id);
+  if ((await focusedIn(s)) !== "send-active") throw new Error(`focus not on the new screen: ${await focusedIn(s)}`);
+  if (await s.evaluate(() => { const e = document.getElementById("engine-status"); return e.hasAttribute("aria-live") || e.hasAttribute("role"); })) {
+    throw new Error("the engine's loading area is a live region");
+  }
+  await s.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => {} }, configurable: true });
+  });
+  await s.click("#copy-link");
+  await s.locator("#announce", { hasText: "Copied" }).waitFor({ timeout: 5_000 });
+  await p.openReceiver(link, "privacy");
+  await p.download();
+  // The sender gone: the receiver's redial is announced, its countdown not.
+  const { file: big } = mkFile(24 * MiB);
+  const link2 = await p.startSender(big, "privacy");
+  await p.openReceiver(link2, "privacy");
+  await p.waitRecvAtLeast(2 * MiB);
+  await s.goto("about:blank");
+  await r.locator("#recv-active-status", { hasText: "Trying again in" }).waitFor({ timeout: 60_000 });
+  if ((await r.getAttribute("#recv-active-status", "aria-live")) !== "off") throw new Error("the countdown is announced");
+  await r.locator("#announce", { hasText: "Connection lost" }).waitFor({ timeout: 5_000 });
+};
+
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);
