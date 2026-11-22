@@ -293,8 +293,15 @@ func tsDial(this js.Value, args []js.Value) any {
 // pingUntil retries the meow/meowed handshake until it succeeds or
 // ctx expires. The first pings can be lost while either side's DERP
 // connection is still coming up.
+//
+// A ping that fails fast (offline, or the DERP map fetch failing) is
+// retried with a growing pause, so it isn't refetched in a tight loop.
+// Attempts start at least delay apart, so a ping that timed out is
+// retried right away as before.
 func pingUntil(ctx context.Context, cl *tailcat.Client) error {
+	delay := 250 * time.Millisecond
 	for {
+		start := time.Now()
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		_, err := cl.Ping(pctx)
 		cancel()
@@ -304,6 +311,12 @@ func pingUntil(ctx context.Context, cl *tailcat.Client) error {
 		if ctx.Err() != nil {
 			return fmt.Errorf("ping: %w", err)
 		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("ping: %w", err)
+		case <-time.After(delay - time.Since(start)):
+		}
+		delay = min(delay*2, 2*time.Second)
 	}
 }
 
