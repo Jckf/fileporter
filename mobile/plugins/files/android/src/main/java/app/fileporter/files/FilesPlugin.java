@@ -27,12 +27,14 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.FileInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -67,6 +69,8 @@ public class FilesPlugin extends Plugin {
     // Shared to us during this run: readable until the app closes.
     private final Set<String> granted = ConcurrentHashMap.newKeySet();
     private volatile JSObject shared = null;
+    // Files being read, by uri (see Source).
+    private final Map<String, Source> sources = new HashMap<>();
 
     @Override
     public void load() {
@@ -152,6 +156,7 @@ public class FilesPlugin extends Plugin {
                 resolver.releasePersistableUriPermission(p.getUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
             }
         }
+        forgetAllBut(keep);
         call.resolve();
     }
 
@@ -206,6 +211,43 @@ public class FilesPlugin extends Plugin {
     }
 
     // --- Reading -------------------------------------------------------------
+
+    /**
+     * A file the page reads. When its provider can only stream it (a
+     * pipe, not a file) a range can't start at an offset, only read up
+     * to it. The page reads in order, so the stream a range leaves off
+     * is kept for the next one, which carries on from there instead of
+     * reading from byte 0 again: otherwise a 500 MB file read in 1 MiB
+     * ranges would read 125 GB.
+     */
+    private static final class Source {
+        private InputStream idle; // not being read, at byte idleAt
+        private long idleAt;
+        private boolean dropped; // let go of: streams are closed as they come back
+
+        /** Keeps in (at byte at) for the next range, unless one further along is kept already. */
+        void giveBack(InputStream in, long at) {
+            synchronized (this) {
+                if (!dropped && (idle == null || idleAt < at)) {
+                    InputStream old = idle;
+                    idle = in;
+                    idleAt = at;
+                    in = old;
+                }
+            }
+            closeQuietly(in);
+        }
+
+        void drop() {
+            InputStream in;
+            synchronized (this) {
+                dropped = true;
+                in = idle;
+                idle = null;
+            }
+            closeQuietly(in);
+        }
+    }
 
     private boolean readable(String uri) {
         if (uri == null || uri.isEmpty()) return false;
@@ -271,43 +313,104 @@ public class FilesPlugin extends Plugin {
         }
         if (start < 0 || end < start) return status(400, "Bad Request");
         try {
-            InputStream in = openAt(Uri.parse(uri), start);
             long len = end - start + 1;
+            InputStream in = openRange(uri, start, len);
             Map<String, String> headers = new HashMap<>();
             headers.put("Content-Length", Long.toString(len));
             headers.put("Cache-Control", "no-store");
-            return new WebResourceResponse("application/octet-stream", null, 200, "OK", headers, new Limited(in, len));
+            return new WebResourceResponse("application/octet-stream", null, 200, "OK", headers, in);
         } catch (Exception e) {
             Log.w(TAG, "can't read " + uri, e);
             return status(404, "Not Found");
         }
     }
 
-    private InputStream openAt(Uri uri, long start) throws IOException {
+    /** len bytes of uri from start. */
+    private InputStream openRange(String uri, long start, long len) throws IOException {
         ContentResolver resolver = getContext().getContentResolver();
-        ParcelFileDescriptor pfd = resolver.openFileDescriptor(uri, "r");
+        ParcelFileDescriptor pfd = resolver.openFileDescriptor(Uri.parse(uri), "r");
         if (pfd != null) {
             FileInputStream in = new ParcelFileDescriptor.AutoCloseInputStream(pfd);
             try {
                 in.getChannel().position(start);
-                return in;
+                return new Limited(in, len);
             } catch (IOException e) {
-                in.close(); // a pipe, not a file: read up to start instead
+                in.close(); // a pipe, not a file: stream it instead
             }
         }
-        InputStream in = resolver.openInputStream(uri);
-        if (in == null) throw new IOException("can't open");
-        long left = start;
-        byte[] skip = new byte[64 << 10];
-        while (left > 0) {
-            int n = in.read(skip, 0, (int) Math.min(skip.length, left));
-            if (n < 0) {
-                in.close();
-                throw new IOException("past the end");
-            }
-            left -= n;
+        return stream(source(uri), uri, start, len);
+    }
+
+    private Source source(String uri) {
+        synchronized (sources) {
+            Source s = sources.get(uri);
+            if (s == null) sources.put(uri, s = new Source());
+            return s;
         }
-        return in;
+    }
+
+    /**
+     * A stream of uri at start: the one the last range left there (or
+     * before it) if there is one, else a new one read up to start.
+     */
+    private InputStream stream(Source s, String uri, long start, long len) throws IOException {
+        InputStream in;
+        long at;
+        synchronized (s) {
+            in = s.idle;
+            at = s.idleAt;
+            s.idle = null;
+        }
+        if (in != null && at > start) {
+            closeQuietly(in); // past it: start over
+            in = null;
+        }
+        if (in == null) {
+            in = getContext().getContentResolver().openInputStream(Uri.parse(uri));
+            if (in == null) throw new IOException("can't open");
+            at = 0;
+        }
+        try {
+            long left = start - at;
+            byte[] skip = new byte[64 << 10];
+            while (left > 0) {
+                int n = in.read(skip, 0, (int) Math.min(skip.length, left));
+                if (n < 0) throw new IOException("past the end");
+                left -= n;
+            }
+        } catch (IOException e) {
+            closeQuietly(in);
+            throw e;
+        }
+        return new Streamed(s, in, start, len);
+    }
+
+    /** Lets go of the open files, other than keep's (null: all of them). */
+    private void forgetAllBut(String keep) {
+        List<Source> gone = new ArrayList<>();
+        synchronized (sources) {
+            Iterator<Map.Entry<String, Source>> it = sources.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Source> e = it.next();
+                if (!e.getKey().equals(keep)) {
+                    gone.add(e.getValue());
+                    it.remove();
+                }
+            }
+        }
+        for (Source s : gone) s.drop();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        forgetAllBut(null);
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c == null) return;
+        try {
+            c.close();
+        } catch (IOException ignored) {}
     }
 
     private static WebResourceResponse status(int code, String reason) {
@@ -349,6 +452,67 @@ public class FilesPlugin extends Plugin {
         @Override
         public int available() throws IOException {
             return (int) Math.min(super.available(), left);
+        }
+    }
+
+    /**
+     * len bytes of a stream that is at byte at. Read to the end (or
+     * closed part way), the stream goes back to s for the next range;
+     * the web view may only close this later, after the page has asked
+     * for that range already.
+     */
+    private static final class Streamed extends InputStream {
+        private final Source s;
+        private InputStream in; // null once given back
+        private long at;
+        private long left;
+
+        Streamed(Source s, InputStream in, long at, long len) {
+            this.s = s;
+            this.in = in;
+            this.at = at;
+            left = len;
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] b = new byte[1];
+            return read(b, 0, 1) == 1 ? b[0] & 0xff : -1;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (in == null || left <= 0) return -1;
+            if (len == 0) return 0;
+            int n;
+            try {
+                n = in.read(b, off, (int) Math.min(len, left));
+            } catch (IOException e) {
+                closeQuietly(in);
+                in = null;
+                throw e;
+            }
+            if (n < 0) {
+                closeQuietly(in); // shorter than it said
+                in = null;
+                return -1;
+            }
+            at += n;
+            left -= n;
+            if (left == 0) close();
+            return n;
+        }
+
+        @Override
+        public int available() throws IOException {
+            return in == null ? 0 : (int) Math.min(in.available(), left);
+        }
+
+        @Override
+        public void close() {
+            if (in == null) return;
+            s.giveBack(in, at);
+            in = null;
         }
     }
 }
