@@ -63,6 +63,10 @@ const RECEIVER_ICE_GRACE_MS = 5000;
 // that reason should win. (A cancel is caught on arrival, see
 // sessionControl.)
 const READER_GRACE_MS = 100;
+// How long a cancel waits for the peer to read it and close: on the
+// relay it may sit behind up to a window of chunks (8 MiB), a few
+// seconds at slow relay speeds.
+const CANCEL_DRAIN_MS = 15_000;
 
 export const chunkCount = (size) => Math.ceil(size / CHUNK);
 const chunkLenFor = (size) => (idx) => Math.min(CHUNK, size - idx * CHUNK);
@@ -160,7 +164,13 @@ function sessionControl(ctl, link, current, cancelledText) {
     // and take it for a dropped connection.
     if (transport !== link) transport.send(msg).catch(() => {});
     try { await link.send(msg); } catch {}
-    await link.finish();
+    // Not finish(): on the relay the cancel may be queued behind
+    // megabytes of chunks, and closing before they've drained loses it.
+    // (Nor a half-close: through the tunnel that can end our reads at
+    // once, which finish() takes for the peer having closed.) Instead
+    // the link stays up until the peer, which stops at once on a cancel,
+    // closes it, or CANCEL_DRAIN_MS pass.
+    await Promise.race([link.done, new Promise((r) => setTimeout(r, CANCEL_DRAIN_MS))]);
     // Then everything: also a direct connection that came up meanwhile,
     // and any still being set up.
     stop();

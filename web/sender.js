@@ -229,9 +229,15 @@ async function startSender(state, file) {
   $("send-cancel").onclick = async () => {
     $("send-cancel").disabled = true;
     sendCancelled = true;
-    await currentCtl?.cancel?.();
-    endSend();
+    // Forgotten at once; telling the recipient can take a few seconds
+    // (the cancel may be queued behind chunks), and the listener has to
+    // stay up meanwhile, or the connection carrying it closes with it.
+    setGuard(false);
+    frag.scrub();
+    nativefile.retain(null);
     showCancelled("You cancelled the transfer.");
+    try { await currentCtl?.cancel?.(); } catch {}
+    endSend();
   };
   show("send-active");
   ui.setStep("send-active", 1);
@@ -280,6 +286,7 @@ async function startSender(state, file) {
         ui.setStep("send-done", 3);
       } catch (err) {
         if (currentCtl !== ctl) return; // replaced by a newer connection
+        if (sendCancelled) return; // we cancelled: already said so
         stall.stop();
         $("send-transfer").dataset.phase = "waiting";
         if (err instanceof CancelledError) {

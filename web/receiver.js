@@ -125,8 +125,12 @@ async function receiverLoop(state) {
   $("recv-cancel").onclick = async () => {
     $("recv-cancel").disabled = true;
     recvStopped = true;
-    await recvCtl?.cancel?.();
+    // Telling the sender can take a while (until it closes, see
+    // ctl.cancel): that goes on in the background, while the transfer
+    // is forgotten and its data deleted at once.
+    const telling = recvCtl?.cancel?.();
     await discardReceived(state, "You cancelled the transfer, and the partly received file was deleted.");
+    try { await telling; } catch {}
   };
   show("recv-active");
   ui.setStep("recv-active", 1);
