@@ -136,7 +136,8 @@ function bufferMessages(dc) {
  *
  * `signal` must deliver incoming {t:"rtc"|"ice"} control messages via
  * signal.onMessage = fn, and send via signal.send(msg). `abort`, an
- * optional AbortSignal, gives up on a connection still being set up.
+ * optional AbortSignal, gives up on a connection still being set up,
+ * or closes it once connected.
  */
 export async function connect({ localMode, effectiveMode, offerer, signal, iceServers, timeoutMs, abort }) {
   if (lockedOut || localMode !== "performance" || effectiveMode !== "performance") {
@@ -196,6 +197,10 @@ export async function connect({ localMode, effectiveMode, offerer, signal, iceSe
     }
     const dc = await opened;
     cleanup();
+    // Connected: aborting now closes it, so one the caller never got to
+    // use (its session ended first) doesn't stay open, nor its TURN
+    // allocation. (Closing twice is harmless.)
+    abort?.addEventListener("abort", () => pc.close(), { once: true });
     return { pc, dc };
   } catch (err) {
     cleanup();

@@ -125,7 +125,9 @@ function sessionControl(ctl, link, current) {
     await link.finish();
   };
   // ctl lets the page stop this session, or cancel it (telling the peer).
-  ctl.stop = () => { current().shutdown(); link.shutdown(); };
+  // (Also gives up on peer connections still being set up: a session
+  // stopped while connecting would otherwise linger until ICE times out.)
+  ctl.stop = () => { connecting.abort(); current().shutdown(); link.shutdown(); };
   // Best effort, from pagehide: tell the peer we're leaving.
   ctl.bye = () => {
     const transport = current();
