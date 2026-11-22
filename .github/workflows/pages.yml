@@ -47,6 +47,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # The engine's own tests run as js/wasm, in the runner's Node, via
+      # the toolchain's go_js_wasm_exec.
+      - name: Test engine
+        run: PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test ./cmd/engine
       - name: Build site
         run: go run ./cmd/build -o dist
       # Built here, where Go is set up and cached, so the test jobs need
