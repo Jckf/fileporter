@@ -45,6 +45,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -53,6 +54,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	htmlstd "html"
 	"log"
 	"os"
 	"os/exec"
@@ -194,6 +196,17 @@ func run(out string) error {
 		attr, file, _ := strings.Cut(ref, `="`)
 		html = strings.Replace(html, ref, attr+`="v/`+version+"/"+file, 1)
 	}
+	// Say which source this is, in the footer.
+	const marker = "<!--build:version-->"
+	if strings.Count(html, marker) != 1 {
+		return fmt.Errorf("index.html: expected exactly one %s", marker)
+	}
+	desc, commit := gitVersion()
+	stamp := ""
+	if desc != "" {
+		stamp = `· Version <a href="https://github.com/Jckf/fileporter/commit/` + commit + `">` + htmlstd.EscapeString(desc) + `</a>`
+	}
+	html = strings.Replace(html, marker, stamp, 1)
 	rootFiles["index.html"] = []byte(html)
 	for n, b := range rootFiles {
 		dst := filepath.Join(out, filepath.FromSlash(n))
@@ -205,9 +218,26 @@ func run(out string) error {
 		}
 	}
 
-	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz)",
-		out, version, name, float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20))
+	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz), source %s",
+		out, version, name, float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20), cmp.Or(desc, "unknown"))
 	return nil
+}
+
+// gitVersion describes the checked-out source: the latest tag (with
+// the commits since, if any) or, without tags, the commit; plus
+// "-dirty" for uncommitted changes. commit is the full hash, to link
+// to. Both are empty outside a git checkout. (CI's shallow clone has
+// no tags unless the checkout fetches them.)
+func gitVersion() (desc, commit string) {
+	d, err := exec.Command("git", "describe", "--tags", "--always", "--dirty", "--abbrev=12").Output()
+	if err != nil {
+		return "", ""
+	}
+	c, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(string(d)), strings.TrimSpace(string(c))
 }
 
 // writeThirdPartyLicenses collects the license files of every module
