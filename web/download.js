@@ -57,8 +57,9 @@ export async function download(id, { name, type }) {
   frame.hidden = true;
   const url = new URL(`dl/${id}/${encodeURIComponent(name)}`, location.href);
   if (type) url.searchParams.set("type", type);
+  let result;
   try {
-    return await new Promise((resolve) => {
+    result = await new Promise((resolve) => {
       // The request never reaching the worker (it was bypassed, or
       // isn't controlling dl/ after all) shows as no "started".
       const timer = setTimeout(() => resolve("unavailable"), STARTED_TIMEOUT_MS);
@@ -72,10 +73,17 @@ export async function download(id, { name, type }) {
       frame.src = url.href;
       document.body.append(frame);
     });
+    return result;
   } finally {
     channel.close();
-    // Not straight away: some engines cancel a download whose frame is
-    // removed while it starts.
-    setTimeout(() => frame.remove(), 60_000);
+    if (result === "unavailable") {
+      // Nothing started, and the caller downloads the file another way:
+      // a late answer to this request mustn't start a second download.
+      frame.remove();
+    } else {
+      // Not straight away: some engines cancel a download whose frame
+      // is removed while it starts.
+      setTimeout(() => frame.remove(), 60_000);
+    }
   }
 }
