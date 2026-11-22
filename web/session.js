@@ -347,12 +347,16 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
     // A file we already have in full is only ever finished, not received
     // again: the sender starting over means its file changed.
-    if (st.status === "complete" && fromChunk !== st.chunks) {
-      // Told, so the sender stops waiting for us to come back.
+    // A file we already have in full whose sender's file changed since
+    // (seen as it starting over, or as the final check failing): keep
+    // ours, and cancel so the sender stops too rather than retry or wait
+    // for us. (Over the link: the peer watches it throughout.)
+    const fileChanged = async () => {
       await link.send({ t: "cancel" }).catch(() => {});
       await end();
-      throw new FatalError(FILE_CHANGED);
-    }
+      return new FatalError(FILE_CHANGED);
+    };
+    if (st.status === "complete" && fromChunk !== st.chunks) throw await fileChanged();
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
 
     const effective = effectiveMode(senderMode, state.rm);
@@ -417,13 +421,11 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     const root = await storage.root(state.id);
     const ok = root === done.root;
     if (!ok) {
-      // A file we already had in full was verified then and stays: it's
-      // the sender's file that changed. Anything else is discarded.
-      const kept = st.status === "complete";
-      if (!kept) await storage.reset(state.id);
+      if (st.status === "complete") throw await fileChanged();
+      await storage.reset(state.id);
       await transport.send({ t: "complete", ok, root }).catch(() => {});
       await end();
-      throw new FatalError(kept ? FILE_CHANGED : "The file didn't arrive intact, so it was discarded. Try again to receive it once more.");
+      throw new FatalError("The file didn't arrive intact, so it was discarded. Try again to receive it once more.");
     }
     // Mark complete before telling the sender, so a crash in between
     // can't leave us without the file while the sender thinks it's done.
