@@ -24,6 +24,8 @@
 //                 first, and declining keeps the transfer
 //   unsaved-link  another link opened while a received file waits to
 //                 be saved asks first; declining keeps it
+//   save-abort    the page reloads while it saves a received file: no
+//                 partial file is left where it was being saved
 //
 // Needs Docker, /dev/kvm and internet (tailcat's public DERP relays).
 // Build the APK first (mobile/run mobile/build android), then:
@@ -453,6 +455,45 @@ tests["unsaved-link"] = async ({ desktop, shell, find, tap, appPage }) => {
     await stays(page, "recv-save", "other link declined");
     await page.evaluate(() => { location.href = "./"; });
     return "another link asked about, declining kept the file to save";
+  });
+};
+
+// The page reloading while it saves a received file (through the
+// SaveFile plugin) aborts the save: no partial file is left where it
+// was being saved.
+tests["save-abort"] = async ({ desktop, shell, find, tap, appPage }) => {
+  const name = `abort-${Date.now()}.bin`;
+  const size = 2 * SIZE; // enough that saving takes a while
+  return receiveInApp(desktop, shell, appPage, name, randomBytes(size), async (page) => {
+    // Reloads at the first progress that isn't the end: from the page
+    // itself, as a round trip from here could miss the save. Notes the
+    // percentage for after the reload.
+    await mark(page);
+    await page.evaluate(() => {
+      const el = document.getElementById("recv-save-status");
+      const watch = new MutationObserver(() => {
+        const m = /^Saving… (\d+)%/.exec(el.textContent);
+        if (!m) return;
+        watch.disconnect();
+        sessionStorage.setItem("testReloadedAt", m[1]);
+        location.reload();
+      });
+      watch.observe(el, { childList: true, characterData: true, subtree: true });
+    });
+    step("saving, reloading on the way");
+    await page.click("#recv-save-btn");
+    await tap(await find(/^save$/i));
+    await page.waitForFunction(() => sessionStorage.getItem("testReloadedAt") && !window.testMark, null, { timeout: 120_000 });
+    await page.locator("#recv-save:visible").waitFor({ timeout: 30_000 });
+    const at = Number(await page.evaluate(() => sessionStorage.getItem("testReloadedAt")));
+    if (at >= 100) throw new Error("saved before the reload; use a bigger file");
+    // abort() deletes it: give it a moment.
+    const left = async () => (await shell(`ls /sdcard/Download/ | grep -F '${name.replace(/\.bin$/, "")}' || true`)).trim();
+    await waitUntil(async () => !(await left()), 15_000, "partial file left", 500).catch(async (err) => {
+      throw new Error(`${err.message}: ${await left()} (${await shell(`ls -l /sdcard/Download/ | grep -F '${name.replace(/\.bin$/, "")}'`)})`);
+    });
+    await page.evaluate(() => { sessionStorage.removeItem("testReloadedAt"); location.href = "./"; });
+    return `reloaded at ${at}% of saving ${size / MiB} MiB, no partial file left`;
   });
 };
 
