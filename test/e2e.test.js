@@ -755,8 +755,10 @@ tests["stall-reconnect"] = async (p) => {
   await p.receiver.locator("#recv-stall").waitFor({ timeout: 60_000 });
   const code = await p.receiver.textContent("#recv-stall-code");
   if (!/ · recv · relay · [a-z]{3} · \d+\/\d+ · \d+s · web$/.test(code)) throw new Error(`unexpected report line: ${code}`);
-  await p.rctx.setOffline(false);
+  // Reconnect while still offline: back online first, the connection
+  // can recover by itself and hide the note before the click lands.
   await p.receiver.click("#recv-stall-retry");
+  await p.rctx.setOffline(false);
   if (sha(await p.download()) !== hash) throw new Error("hash mismatch after reconnecting");
   return code;
 };
