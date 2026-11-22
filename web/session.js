@@ -110,6 +110,8 @@ export class ChunkHashes {
 export async function senderSession(conn, { state, file, hashes, iceServers, turnServers = [], iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
+  // Gives up on peer connections still being set up when the session ends.
+  const connecting = new AbortController();
   // ctl lets the page stop this session, or cancel it (telling the peer).
   ctl.stop = () => { transport.shutdown(); link.shutdown(); };
   // Best effort, from pagehide: tell the peer we're leaving.
@@ -151,6 +153,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
         const { pc, dc } = await rtc.connect({
           localMode: state.m, effectiveMode: effective, offerer: true,
           signal: lanes.lane(0), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
+          abort: connecting.signal,
         });
         transport = new RtcTransport(pc, dc, chunkLenFor(file.size));
         relayed = ownTurn.length > 0 && (await rtc.usesRelay(pc));
@@ -170,6 +173,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
         rtc.connect({
           localMode: state.m, effectiveMode: effective, offerer: true,
           signal: lanes.lane(l), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
+          abort: connecting.signal,
         }).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
       }
     }
@@ -237,6 +241,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     return { via: transport.via };
   } finally {
     ctl.stop = ctl.cancel = null;
+    connecting.abort();
     if (transport !== link) transport.shutdown();
     link.shutdown();
   }
@@ -255,6 +260,8 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
 export async function receiverSession(conn, { state, target, canMakeRoom, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
+  // Gives up on peer connections still being set up when the session ends.
+  const connecting = new AbortController();
   // ctl lets the page stop this session, or cancel it (telling the peer).
   ctl.stop = () => { transport.shutdown(); link.shutdown(); };
   // Best effort, from pagehide: tell the peer we're leaving.
@@ -307,6 +314,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     const rtcOptions = (l) => ({
       localMode: state.rm, effectiveMode: effective, offerer: false,
       signal: lanes.lane(l), iceServers: [...iceServers, ...turn.sanitize(senderTurn)], timeoutMs: iceTimeoutMs + 5000,
+      abort: connecting.signal,
     });
     if (effective === "performance") {
       lanes = rtc.signalLanes(link.signal(), LANES);
@@ -382,6 +390,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
       : new NoSpaceError("This device ran out of storage space. Free up some space, then try again to continue where you left off.");
   } finally {
     ctl.stop = ctl.cancel = null;
+    connecting.abort();
     if (transport !== link) transport.shutdown();
     link.shutdown();
   }

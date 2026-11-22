@@ -135,17 +135,24 @@ function bufferMessages(dc) {
  * rejects on timeout/failure (caller falls back to the relay).
  *
  * `signal` must deliver incoming {t:"rtc"|"ice"} control messages via
- * signal.onMessage = fn, and send via signal.send(msg).
+ * signal.onMessage = fn, and send via signal.send(msg). `abort`, an
+ * optional AbortSignal, gives up on a connection still being set up.
  */
-export async function connect({ localMode, effectiveMode, offerer, signal, iceServers, timeoutMs }) {
+export async function connect({ localMode, effectiveMode, offerer, signal, iceServers, timeoutMs, abort }) {
   if (lockedOut || localMode !== "performance" || effectiveMode !== "performance") {
     throw new Error("refusing WebRTC outside performance mode");
   }
   const pc = new RTCPeerConnection({ iceServers });
-  let timer;
-  const cleanup = () => clearTimeout(timer);
+  let timer, onAbort;
+  const cleanup = () => {
+    clearTimeout(timer);
+    abort?.removeEventListener("abort", onAbort);
+  };
   const opened = new Promise((resolve, reject) => {
     timer = setTimeout(() => reject(new Error("ICE timeout")), timeoutMs);
+    onAbort = () => reject(new Error("cancelled"));
+    if (abort?.aborted) onAbort();
+    abort?.addEventListener("abort", onAbort);
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") reject(new Error("ICE failed"));
     };
@@ -165,6 +172,7 @@ export async function connect({ localMode, effectiveMode, offerer, signal, iceSe
   // Remote candidates can't be added before the remote description.
   const earlyCandidates = [];
   signal.onMessage = async (m) => {
+    if (pc.signalingState === "closed") return; // given up on (timeout, failure or abort)
     try {
       if (m.t === "rtc") {
         await pc.setRemoteDescription(m.desc);
