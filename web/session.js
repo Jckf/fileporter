@@ -309,11 +309,12 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
 
     let attempt = null;
     let lanes = null;
-    // The sender's TURN servers, if any: only ever here, where both
+    // The sender's TURN servers, if any: only ever used here, where both
     // chose performance (and WebRTC is locked out otherwise anyway).
+    const theirTurn = turn.sanitize(senderTurn);
     const rtcOptions = (l) => ({
       localMode: state.rm, effectiveMode: effective, offerer: false,
-      signal: lanes.lane(l), iceServers: [...iceServers, ...turn.sanitize(senderTurn)], timeoutMs: iceTimeoutMs + 5000,
+      signal: lanes.lane(l), iceServers: [...iceServers, ...theirTurn], timeoutMs: iceTimeoutMs + 5000,
       abort: connecting.signal,
     });
     if (effective === "performance") {
@@ -322,13 +323,14 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
       attempt.catch(() => {}); // the sender's transport decision is what counts
     }
     const { via } = await link.next("transport");
+    if (via !== "rtc" && via !== "relay") throw new Error(`unknown transport ${via}`);
     let relayed = false;
     if (via === "rtc") {
       if (!attempt) throw new FatalError("The sender tried to connect directly, but you chose Private. The transfer was stopped to keep your IP address hidden.");
       const { pc, dc } = await attempt;
       const rtcTransport = new RtcTransport(pc, dc, chunkLenFor(hello.size));
       transport = rtcTransport;
-      relayed = senderTurn != null && (await rtc.usesRelay(pc));
+      relayed = theirTurn.length > 0 && (await rtc.usesRelay(pc));
       // More lanes, as the sender opens them (see senderSession).
       lanes.onNewLane = (l) => {
         rtc.connect(rtcOptions(l)).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
