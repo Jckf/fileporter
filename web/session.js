@@ -150,8 +150,18 @@ function sessionControl(ctl, link, current, cancelledText) {
     link.bye();
   };
   ctl.cancel = async () => {
-    try { await current().send({ t: "cancel" }); } catch {}
-    await end();
+    const msg = { t: "cancel" };
+    const transport = current();
+    // Over the link as well: a direct connection may have megabytes
+    // queued ahead of it (more than finish() waits for), and the peer
+    // may not have switched to it yet. The link is idle then, and the
+    // peer watches it throughout. The direct connection closes only
+    // after the link has finished, so the peer doesn't see that first
+    // and take it for a dropped connection.
+    if (transport !== link) transport.send(msg).catch(() => {});
+    try { await link.send(msg); } catch {}
+    await link.finish();
+    if (transport !== link) transport.shutdown();
   };
   const teardown = () => {
     ctl.stop = ctl.bye = ctl.cancel = null;
