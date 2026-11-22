@@ -310,8 +310,11 @@ const ops = {
   /** Discards partial data (e.g. checksum mismatch), keeping the transfer. */
   async reset({ id }) {
     const st = requireOpen(id);
-    st.metaObj.status = "receiving";
+    // (A complete transfer has its data handle closed; see open.)
+    if (!st.data && !st.target) st.data = await syncHandle(st.dir, "data");
+    if (!st.hashes) st.hashes = await syncHandle(st.dir, "hashes.bin");
     await truncateTo(st, 0);
+    st.metaObj.status = "receiving"; // only once the data is gone
     await writeMeta(st);
   },
 

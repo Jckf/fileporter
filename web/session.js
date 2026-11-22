@@ -85,6 +85,7 @@ export class NeedsRoomError extends Error {
   constructor(hello) { super("needs more room"); this.hello = hello; }
 }
 
+const FILE_CHANGED = "The sender's file has changed since you received it. Ask them for a new link.";
 const NOSPACE_SENDER = "The recipient's device doesn't have enough storage space for this file. The transfer continues once they free up some space and try again.";
 const isQuotaError = (err) => err?.name === "QuotaExceededError";
 
@@ -336,7 +337,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
     // A file we already have in full is only ever finished, not received
     // again: the sender starting over means its file changed.
-    if (st.status === "complete" && fromChunk !== st.chunks) throw new FatalError("The sender's file has changed since you received it. Ask them for a new link.");
+    if (st.status === "complete" && fromChunk !== st.chunks) throw new FatalError(FILE_CHANGED);
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
 
     const effective = effectiveMode(senderMode, state.rm);
@@ -401,10 +402,13 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     const root = await storage.root(state.id);
     const ok = root === done.root;
     if (!ok) {
-      await storage.reset(state.id);
+      // A file we already had in full was verified then and stays: it's
+      // the sender's file that changed. Anything else is discarded.
+      const kept = st.status === "complete";
+      if (!kept) await storage.reset(state.id);
       await transport.send({ t: "complete", ok, root }).catch(() => {});
       await end();
-      throw new FatalError("The file didn't arrive intact, so it was discarded. Try again to receive it once more.");
+      throw new FatalError(kept ? FILE_CHANGED : "The file didn't arrive intact, so it was discarded. Try again to receive it once more.");
     }
     // Mark complete before telling the sender, so a crash in between
     // can't leave us without the file while the sender thinks it's done.
