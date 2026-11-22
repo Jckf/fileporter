@@ -10,7 +10,6 @@ import android.content.UriPermission;
 import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.system.ErrnoException;
@@ -240,69 +239,74 @@ public class FilesPlugin extends Plugin {
      * order, so the stream a range leaves off is kept for the next one,
      * which carries on from there instead of reading from byte 0 again:
      * otherwise a 500 MB file read in 1 MiB ranges would read 125 GB.
+     * A provider may also hand out part of a file (say, one entry of an
+     * archive): its bytes start at an offset into the file it opens.
      */
     private static final class Source {
-        private ParcelFileDescriptor pfd; // a file, open while ranges read it
-        private int users; // ranges reading pfd
+        private AssetFileDescriptor file; // open while ranges read it
+        private int users; // ranges reading file
         private boolean pipe; // not a file: streamed
         private InputStream idle; // not being read, at byte idleAt
         private long idleAt;
         private boolean dropped; // let go of: closed once no range reads it
 
         /**
-         * The file to read a range of (release() it after), or null if it
-         * can only be streamed. Opened on first use, outside the lock: a
-         * cloud provider may take seconds over it, and drop() (from the
-         * main thread, or the one plugin calls run on) mustn't wait for
-         * that. Ranges that miss it at the same time each open it; the
-         * first one in keeps its own and the others close theirs.
+         * The file to read a range of (release() it after), from its
+         * getStartOffset() and no further than its getDeclaredLength() if
+         * it has one, or null if it can only be streamed. Opened on first
+         * use, outside the lock: a cloud provider may take seconds over
+         * it, and drop() (from the main thread, or the one plugin calls
+         * run on) mustn't wait for that. Ranges that miss it at the same
+         * time each open it; the first one in keeps its own and the
+         * others close theirs.
          */
-        FileDescriptor acquire(ContentResolver resolver, Uri uri) throws IOException {
+        AssetFileDescriptor acquire(ContentResolver resolver, Uri uri) throws IOException {
             synchronized (this) {
-                if (pfd != null) {
+                if (file != null) {
                     users++;
-                    return pfd.getFileDescriptor();
+                    return file;
                 }
                 if (pipe) return null;
                 if (dropped) throw new IOException("let go of");
             }
-            ParcelFileDescriptor p = resolver.openFileDescriptor(uri, "r");
-            boolean file = false;
-            if (p != null) {
+            // Not openFileDescriptor(): that refuses part of a file.
+            AssetFileDescriptor f = resolver.openAssetFileDescriptor(uri, "r");
+            boolean seekable = false;
+            if (f != null) {
                 try {
-                    Os.lseek(p.getFileDescriptor(), 0, OsConstants.SEEK_CUR);
-                    file = true;
+                    Os.lseek(f.getFileDescriptor(), 0, OsConstants.SEEK_CUR);
+                    seekable = true;
                 } catch (ErrnoException e) {
                     // a pipe, not a file: stream it instead
                 }
             }
-            FileDescriptor fd = null;
+            AssetFileDescriptor got = null;
             synchronized (this) {
-                if (!file) {
+                if (!seekable) {
                     pipe = true;
-                } else if (pfd == null && !dropped) {
-                    pfd = p;
-                    p = null;
+                } else if (file == null && !dropped) {
+                    file = f;
+                    f = null;
                 }
-                if (pfd != null) {
+                if (file != null) {
                     users++;
-                    fd = pfd.getFileDescriptor();
+                    got = file;
                 }
             }
-            closeQuietly(p); // a pipe, or another range got there first
-            if (fd == null && file) throw new IOException("let go of");
-            return fd;
+            closeQuietly(f); // a pipe, or another range got there first
+            if (got == null && seekable) throw new IOException("let go of");
+            return got;
         }
 
         void release() {
-            ParcelFileDescriptor p = null;
+            AssetFileDescriptor f = null;
             synchronized (this) {
                 if (--users == 0 && dropped) {
-                    p = pfd;
-                    pfd = null;
+                    f = file;
+                    file = null;
                 }
             }
-            closeQuietly(p);
+            closeQuietly(f);
         }
 
         /** Keeps in (at byte at) for the next range, unless one further along is kept already. */
@@ -320,18 +324,18 @@ public class FilesPlugin extends Plugin {
 
         void drop() {
             InputStream in;
-            ParcelFileDescriptor p = null;
+            AssetFileDescriptor f = null;
             synchronized (this) {
                 dropped = true;
                 in = idle;
                 idle = null;
                 if (users == 0) {
-                    p = pfd;
-                    pfd = null;
+                    f = file;
+                    file = null;
                 }
             }
             closeQuietly(in);
-            closeQuietly(p);
+            closeQuietly(f);
         }
     }
 
@@ -417,8 +421,12 @@ public class FilesPlugin extends Plugin {
     /** len bytes of uri from start. */
     private InputStream openRange(String uri, long start, long len) throws IOException {
         Source s = source(uri);
-        FileDescriptor fd = s.acquire(getContext().getContentResolver(), Uri.parse(uri));
-        if (fd != null) return new FileRange(s, fd, start, len);
+        AssetFileDescriptor f = s.acquire(getContext().getContentResolver(), Uri.parse(uri));
+        if (f != null) {
+            long declared = f.getDeclaredLength(); // part of a file ends there
+            long have = declared < 0 ? len : Math.max(0, Math.min(len, declared - start));
+            return new FileRange(s, f.getFileDescriptor(), f.getStartOffset() + start, have);
+        }
         return stream(s, uri, start, len);
     }
 
