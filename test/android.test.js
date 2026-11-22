@@ -269,6 +269,10 @@ tests["send-pipe"] = async ({ desktop, device, shell, appPage }) => {
   await device.push(buffer, `/data/local/tmp/${name}`);
   await shell(`run-as app.fileporter sh -c 'mkdir -p files/pipe && rm -f files/pipe/* && cp /data/local/tmp/${name} files/pipe/' && rm /data/local/tmp/${name}`);
   await shell("logcat -c");
+  // From a stopped app, as send-resume does: one still sending (an
+  // earlier test that failed mid-transfer) would rightly ask before
+  // taking the shared file.
+  await shell("am force-stop app.fileporter");
   const uri = `content://app.fileporter.pipe/${name}`;
   await shell(`am start -W -a android.intent.action.SEND -t application/octet-stream --eu android.intent.extra.STREAM ${uri} -n app.fileporter/.MainActivity`);
   const page = await appPage();
