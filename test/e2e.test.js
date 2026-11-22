@@ -355,6 +355,57 @@ for (const [sm, rm] of [["performance", "performance"], ["performance", "privacy
   };
 }
 
+// A relayed transfer over several peer connections ("lanes",
+// web/transport.js), through a TURN server given as FP_TURN
+// (turn:host:port; FP_TURN_USER/FP_TURN_PASS, default fp/fp). CI runs
+// coturn for it. The sender may only use the relay, as on a network
+// where direct connections fail; both sides get the server (the
+// receiver from the sender), so the path is relay to relay.
+const LOCAL_TURN = process.env.FP_TURN
+  ? { urls: process.env.FP_TURN, username: process.env.FP_TURN_USER || "fp", credential: process.env.FP_TURN_PASS || "fp" }
+  : null;
+tests["turn-lanes"] = async (p) => {
+  await p.sender.addInitScript(() => {
+    window.__lanes = { up: 0, max: 0 };
+    const PC = window.RTCPeerConnection;
+    window.RTCPeerConnection = new Proxy(PC, {
+      construct(t, [cfg = {}, ...rest]) {
+        const pc = Reflect.construct(t, [{ ...cfg, iceTransportPolicy: "relay" }, ...rest]);
+        let up = false;
+        pc.addEventListener("connectionstatechange", () => {
+          const now = pc.connectionState === "connected";
+          if (now === up) return;
+          up = now;
+          window.__lanes.up += now ? 1 : -1;
+          window.__lanes.max = Math.max(window.__lanes.max, window.__lanes.up);
+        });
+        return pc;
+      },
+    });
+  });
+  const s = p.sender;
+  await s.goto(BASE);
+  await s.check('input[name="send-mode"][value="performance"]');
+  await s.click("#turn-settings summary");
+  await s.fill("#turn-urls", LOCAL_TURN.urls);
+  await s.fill("#turn-username", LOCAL_TURN.username);
+  await s.fill("#turn-credential", LOCAL_TURN.credential);
+  await s.click("#turn-save");
+  await s.locator("#turn-clear:visible").waitFor();
+  const { file, hash } = mkFile(24 * MiB + 4321);
+  const link = await p.startSender(file, "performance");
+  await p.openReceiver(link, "performance", "performance");
+  if (sha(await p.download()) !== hash) throw new Error("downloaded file hash mismatch");
+  await s.locator("#send-done").waitFor({ timeout: 30_000 });
+  const lanes = await s.evaluate(() => window.__lanes.max);
+  if (lanes < 2) throw new Error(`only ${lanes} peer connection(s) up at once; want lanes`);
+  if (await badgeVia(p.receiver, "#recv-badge") !== "relay") throw new Error("receiver's badge doesn't say relayed");
+  return `${lanes} lanes`;
+};
+tests["turn-lanes"].skipWhy = ({ rtcWorks }) =>
+  !LOCAL_TURN ? "needs a TURN server (FP_TURN), which CI starts"
+    : !rtcWorks ? "WebRTC can't connect in this environment" : null;
+
 tests["save-picker"] = async (p) => {
   // Chromium's save path: showSaveFilePicker and a stream into the
   // chosen file. The initScript hides the real picker (Playwright can't
@@ -965,6 +1016,11 @@ for (const name of browsers) {
       if (only.length && !only.some((o) => tname.startsWith(o))) continue;
       if (fn.browsers && !fn.browsers.includes(name)) {
         console.log(`SKIP ${label} ${tname.padEnd(34)} ${fn.browsersWhy}`);
+        continue;
+      }
+      const skipWhy = fn.skipWhy?.({ rtcWorks });
+      if (skipWhy) {
+        console.log(`SKIP ${label} ${tname.padEnd(34)} ${skipWhy}`);
         continue;
       }
       // Without private-mode storage, only `always` tests get a private

@@ -133,6 +133,18 @@ jobs:
             sleep 30
           done
           exit 1
+      # A TURN server for the turn-lanes test, on the runner's own
+      # address: Firefox won't use loopback ones. (WebKit can't connect
+      # directly here at all, so it skips the test.)
+      - name: Start TURN server
+        if: matrix.browser != 'webkit'
+        run: |
+          ip=$(ip -4 route get 1.1.1.1 | grep -oP 'src \K[\d.]+')
+          docker run -d --network host \
+            coturn/coturn:4.19.2@sha256:ccdbc51e6f072130b0fc9eebda21f8d026d0a25581746c52557e887818011a3f \
+            -n --no-tls --listening-port=3479 --min-port=50000 --max-port=50100 \
+            --lt-cred-mech --user=fp:fp --realm=fileporter.test --listening-ip="$ip" --relay-ip="$ip"
+          echo "FP_TURN=turn:$ip:3479" >> "$GITHUB_ENV"
       - name: Run e2e tests
         working-directory: test
         run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
