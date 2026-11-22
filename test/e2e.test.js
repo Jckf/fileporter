@@ -23,6 +23,10 @@ import { join } from "node:path";
 import { MiB, sleep, waitUntil, linkOf, parseBytes } from "./helpers.js";
 
 const BASE = process.env.BASE_URL || "http://localhost:8080/";
+// Navigations wait for the DOM, not the load event: every test waits for
+// the elements it needs right after, and the load event alone once took
+// over 30 s in WebKit on a CI runner for no reason found in the page.
+const NAV = { waitUntil: "domcontentloaded" };
 const engines = { chromium, firefox, webkit };
 const args = process.argv.slice(2);
 const only = (args.find((a) => a.startsWith("--only=")) || "").slice(7).split(",").filter(Boolean);
@@ -200,7 +204,7 @@ class Pair {
 
   async startSender(file, mode) {
     const s = this.sender;
-    await s.goto(BASE);
+    await s.goto(BASE, NAV);
     await s.locator("#send-new").waitFor();
     await s.setInputFiles("#send-file", file);
     await s.check(`input[name="send-mode"][value="${mode}"]`);
@@ -211,7 +215,7 @@ class Pair {
 
   async openReceiver(link, senderMode, receiverMode) {
     const r = this.receiver;
-    await r.goto(link);
+    await r.goto(link, NAV);
     if (senderMode === "performance") {
       await r.check(`input[name="recv-mode"][value="${receiverMode}"]`);
       await r.click("#recv-continue");
@@ -313,7 +317,7 @@ const TURN = { urls: "turn:127.0.0.1:9", username: "fp-user", credential: "fp-se
 for (const [sm, rm] of [["performance", "performance"], ["performance", "privacy"], ["privacy", "performance"]]) {
   tests[`turn-${sm}-${rm}`] = async (p) => {
     const s = p.sender, r = p.receiver;
-    await s.goto(BASE);
+    await s.goto(BASE, NAV);
     await s.check('input[name="send-mode"][value="performance"]');
     await s.click("#turn-settings summary");
     await s.fill("#turn-urls", "turn:bad host");
@@ -393,7 +397,7 @@ tests["turn-lanes"] = async (p) => {
     });
   });
   const s = p.sender;
-  await s.goto(BASE);
+  await s.goto(BASE, NAV);
   await s.check('input[name="send-mode"][value="performance"]');
   await s.click("#turn-settings summary");
   await s.fill("#turn-urls", LOCAL_TURN.urls);
@@ -483,7 +487,7 @@ tests["scan-qr"] = async (p) => {
       return c.captureStream(10);
     } });
   }, png);
-  await r.goto(BASE);
+  await r.goto(BASE, NAV);
   await r.click("#scan-qr");
   await r.locator("#recv-active").waitFor({ timeout: 60_000 }).catch(async (err) => { // Firefox decodes slowly
     const why = await r.evaluate(() => [document.getElementById("scanner-status")?.textContent, document.getElementById("scan-error")?.textContent]).catch(() => []);
@@ -542,7 +546,7 @@ tests["app-send"] = async (p) => {
   });
   await asApp(p.sender, "send", { name: file.name, size: file.buffer.length, type: file.mimeType, lastModified: Date.now() });
   const s = p.sender;
-  await s.goto(BASE);
+  await s.goto(BASE, NAV);
   await s.locator("#send-new").waitFor();
   await s.click('label[for="send-file"]');
   await s.locator("#send-file-card:visible").waitFor();
@@ -568,7 +572,7 @@ tests["app-save"] = async (p) => {
   const link = await p.startSender(file, "privacy");
   await asApp(p.receiver, "save");
   const r = p.receiver;
-  await r.goto(link);
+  await r.goto(link, NAV);
   await r.locator("#recv-save").waitFor({ timeout: 300_000 });
   await r.click("#recv-save-btn");
   await r.locator("#recv-save-status", { hasText: "Couldn't save the file: Simulated full disk. Try again." }).waitFor({ timeout: 30_000 });
@@ -613,7 +617,7 @@ tests["resume-receiver-reload"] = async (p) => {
   await p.openReceiver(link, "privacy");
   await p.waitRecvAtLeast(4 * MiB);
   const before = await p.recvBytes();
-  await p.receiver.reload();
+  await p.receiver.reload(NAV);
   // Must not prompt again, must not start over.
   await p.receiver.locator("#recv-active").waitFor();
   await p.receiver.locator("#recv-progress-text", { hasText: /\d/ }).waitFor({ timeout: 120_000 });
@@ -635,7 +639,7 @@ tests["resume-sender-reload"] = async (p) => {
   const link = await p.startSender(file, "privacy");
   await p.openReceiver(link, "privacy");
   await p.waitRecvAtLeast(4 * MiB);
-  await p.sender.reload();
+  await p.sender.reload(NAV);
   await p.sender.locator("#send-resume").waitFor();
   // A different file must be refused…
   await p.sender.setInputFiles("#send-resume-file", { name: "other.bin", mimeType: "application/octet-stream", buffer: Buffer.from("nope") });
@@ -672,7 +676,7 @@ tests["stall-reconnect"] = async (p) => {
   // getting through, and once back online, Reconnect must finish it.
   const { file, hash } = mkFile(24 * MiB + 5);
   const link = await p.startSender(file, "privacy");
-  await p.receiver.goto(link.replace("/#", "/?stall=4000#"));
+  await p.receiver.goto(link.replace("/#", "/?stall=4000#"), NAV);
   await p.receiver.locator("#recv-active").waitFor();
   await p.waitRecvAtLeast(2 * MiB);
   await p.rctx.setOffline(true);
@@ -694,13 +698,13 @@ tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);
   await p.startSender(file, "privacy");
-  await p.sender.reload();
+  await p.sender.reload(NAV);
   await p.sender.locator("#send-resume").waitFor();
   await p.sender.click("#send-resume-cancel");
   await p.sender.locator("#cancelled").waitFor();
   const hash = await p.sender.evaluate(() => location.hash);
   if (hash) throw new Error(`link kept after cancelling: ${hash}`);
-  await p.sender.reload();
+  await p.sender.reload(NAV);
   await p.sender.locator("#send-new").waitFor();
 };
 
@@ -728,7 +732,7 @@ tests["stale-index"] = async (p) => {
     if (served++ === 0) body = body.replace(/v\/[0-9a-f]{12}\//g, "v/000000000000/");
     await route.fulfill({ response: resp, body });
   });
-  await s.goto(BASE + "#R-not-a-real-link");
+  await s.goto(BASE + "#R-not-a-real-link", NAV);
   await s.locator("#bad-link").waitFor({ timeout: 30_000 });
   if (served < 2) throw new Error(`page was fetched ${served} time(s), expected a refetch`);
   if (!s.url().endsWith("#R-not-a-real-link")) throw new Error(`fragment lost: ${s.url()}`);
@@ -736,7 +740,7 @@ tests["stale-index"] = async (p) => {
   // If even the fresh page fails, show a message instead of looping.
   await s.unroute("**");
   await s.route("**/v/*/app.js", (route) => route.fulfill({ status: 404, body: "" }));
-  await s.goto(BASE + "?x=1");
+  await s.goto(BASE + "?x=1", NAV);
   await s.locator('[role="alert"]', { hasText: "couldn't load" }).waitFor({ timeout: 30_000 });
   await s.unroute("**");
 };
@@ -752,7 +756,7 @@ tests["sweep"] = async (p) => {
   // Opens url in page and waits for the sweep it starts to finish.
   const swept = async (page, url) => {
     const done = page.waitForEvent("console", { predicate: (m) => m.text() === "sweep finished", timeout: 30_000 });
-    await page.goto(url);
+    await page.goto(url, NAV);
     await done;
   };
 
@@ -778,7 +782,7 @@ const withQuery = (link, query) => { const u = new URL(link); u.search = query; 
 tests["storage-support"] = async (p) => {
   const { file } = mkFile(1024);
   const link = await p.startSender(file, "privacy");
-  await p.receiver.goto(link);
+  await p.receiver.goto(link, NAV);
   const want = p.storageWorks ? "#recv-active" : "#unsupported";
   const other = p.storageWorks ? "#unsupported" : "#recv-active";
   await p.receiver.locator(want).waitFor({ timeout: 30_000 });
@@ -808,12 +812,12 @@ tests["nospace-upfront"] = async (p) => {
     Object.defineProperty(StorageManager.prototype, "persist", { value: undefined, configurable: true });
   });
   const link = await p.startSender(file, "privacy");
-  await p.receiver.goto(withQuery(link, `quota=${MiB}`));
+  await p.receiver.goto(withQuery(link, `quota=${MiB}`), NAV);
   await p.receiver.locator("#recv-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 60_000 });
   await p.receiver.locator("#recv-retry").waitFor();
   await p.sender.locator("#send-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 30_000 });
   // Space freed: the same link now works.
-  await p.receiver.goto(link);
+  await p.receiver.goto(link, NAV);
   const got = await p.download();
   if (sha(got) !== hash) throw new Error("hash mismatch after retry");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
@@ -837,11 +841,11 @@ tests["save-direct"] = async (p) => {
   await p.receiver.addInitScript(fakeSavePicker);
   const link = await p.startSender(file, "privacy");
   const r = p.receiver;
-  await r.goto(withQuery(link, `quota=${MiB}`));
+  await r.goto(withQuery(link, `quota=${MiB}`), NAV);
   await r.locator("#recv-pick-text", { hasText: "Choose where to save this file" }).waitFor({ timeout: 60_000 });
   await r.click("#recv-pick-btn");
   await p.waitRecvAtLeast(3 * MiB);
-  await r.reload();
+  await r.reload(NAV);
   await r.locator("#recv-cleared").waitFor({ timeout: 300_000 });
   const text = await r.textContent("#recv-cleared-text");
   if (!text.includes("Saved to picked-big.bin")) throw new Error(`unexpected: ${text}`);
@@ -864,18 +868,18 @@ tests["save-direct-resume"] = async (p) => {
   const link = await p.startSender(file, "privacy");
   const r = p.receiver;
   const url = withQuery(link, `quota=${MiB}&commit=${4 * MiB}`);
-  await r.goto(url);
+  await r.goto(url, NAV);
   await r.locator("#recv-pick-btn").waitFor({ timeout: 60_000 });
   await r.click("#recv-pick-btn");
   await p.waitRecvAtLeast(6 * MiB);
-  await r.goto("about:blank");
+  await r.goto("about:blank", NAV);
   // "Resuming…" is shown only for a moment: record every status.
   await r.addInitScript(() => addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById("recv-active-status");
     window.__statuses = [];
     new MutationObserver(() => window.__statuses.push(el.textContent)).observe(el, { childList: true, characterData: true, subtree: true });
   }));
-  await r.goto(url);
+  await r.goto(url, NAV);
   await r.locator("#recv-cleared").waitFor({ timeout: 300_000 });
   if (!(await r.evaluate(() => window.__statuses)).includes("Resuming…")) throw new Error("started over instead of resuming");
   if ((await pickedHash(r, "big.bin")) !== hash) throw new Error("hash mismatch");
@@ -891,7 +895,7 @@ tests["persist-more"] = async (p) => {
   const r = p.receiver;
   await r.addInitScript(() => { delete Window.prototype.showSaveFilePicker; delete window.showSaveFilePicker; });
   const link = await p.startSender(file, "privacy");
-  await r.goto(withQuery(link, `quota=${MiB}`));
+  await r.goto(withQuery(link, `quota=${MiB}`), NAV);
   await r.locator("#recv-pick-text", { hasText: "unless you allow it" }).waitFor({ timeout: 60_000 });
   await r.click("#recv-pick-btn");
   if (!(await r.evaluate(() => navigator.storage.persisted()))) {
@@ -910,13 +914,13 @@ tests["persist-more"].browsersWhy = "only Firefox raises the limit for persisten
 tests["nospace-midway"] = async (p) => {
   const { file, hash } = mkFile(6 * MiB + 5);
   const link = await p.startSender(file, "privacy");
-  await p.receiver.goto(withQuery(link, `writelimit=${2 * MiB}`));
+  await p.receiver.goto(withQuery(link, `writelimit=${2 * MiB}`), NAV);
   await p.receiver.locator("#recv-active-status", { hasText: "ran out of storage space" }).waitFor({ timeout: 120_000 });
   await p.sender.locator("#send-active-status", { hasText: "doesn't have enough storage space" }).waitFor({ timeout: 30_000 });
   // What was stored is kept for the retry…
   if (!(await opfsList(p.receiver)).length) throw new Error("partial data discarded");
   // …which, with space freed, finishes the file.
-  await p.receiver.goto(link);
+  await p.receiver.goto(link, NAV);
   const got = await p.download();
   if (sha(got) !== hash) throw new Error("hash mismatch after resume");
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
@@ -927,7 +931,7 @@ tests["pwa"] = async (p) => {
   // manifest with name, start_url, display and 192/512 px icons (plus a
   // maskable one for Android, and an Apple touch icon for iOS).
   const page = p.sender;
-  await page.goto(BASE);
+  await page.goto(BASE, NAV);
   const r = await page.evaluate(async () => {
     const href = document.querySelector('link[rel="manifest"]')?.href;
     if (!href) return { error: "no manifest link" };
@@ -977,7 +981,7 @@ tests["pwa"].always = true;
 tests["offline"] = async (p) => {
   // The banner follows the browser's connectivity both ways.
   const page = p.sender;
-  await page.goto(BASE);
+  await page.goto(BASE, NAV);
   await page.locator("#send-new").waitFor();
   const banner = page.locator("#offline");
   if (await banner.isVisible()) throw new Error("banner shown while online");
