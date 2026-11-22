@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"sync"
@@ -112,6 +113,9 @@ func tsNewSession(this js.Value, args []js.Value) any {
 		if err := ci.Expand(ctx, tailcat.ExpandForServer, tailcat.DERPMapURL(derpMapURL)); err != nil {
 			return nil, fmt.Errorf("picking DERP region: %w", err)
 		}
+		if len(ci.Region) == 0 || ci.Region[0] == nil {
+			return nil, errors.New("picking DERP region: none picked")
+		}
 		// Pin the region so reopening the sender URL yields the
 		// same address.
 		pk.Public.RegionID = ci.Region[0].RegionID
@@ -182,12 +186,18 @@ func tsListen(this js.Value, args []js.Value) any {
 		if err := ci.Expand(ctx, tailcat.ExpandForServer, tailcat.DERPMapURL(derpMapURL)); err != nil {
 			return nil, fmt.Errorf("expand: %w", err)
 		}
+		// Expand leaves Region empty when RegionID is 0, which a
+		// senderKey (from a URL fragment) can carry.
+		if len(ci.Region) == 0 || ci.Region[0] == nil {
+			return nil, errors.New("senderKey has no DERP region")
+		}
+		region := ci.Region[0]
 
 		srv := &tailcat.Server{
 			Key:          pk.Private,
 			PresharedKey: pk.Public.PresharedKey,
 			Logf:         logf,
-			Region:       ci.Region[0],
+			Region:       region,
 			AllowClient:  allow.Contains,
 		}
 		srv.OnTCP = func(port uint16) func(net.Conn) {
@@ -201,7 +211,7 @@ func tsListen(this js.Value, args []js.Value) any {
 		}
 		ln := js.ValueOf(map[string]any{
 			"addr":   string(pk.Public.Addr()),
-			"region": ci.Region[0].RegionCode, // the relay, for diagnostics
+			"region": region.RegionCode, // the relay, for diagnostics
 		})
 		// Released on close, like a Conn's methods (see makeJSConn).
 		var once sync.Once
@@ -234,7 +244,13 @@ func tsDial(this js.Value, args []js.Value) any {
 	logf := optLogf(opts)
 	port := uint16(1)
 	if p := opts.Get("port"); p.Type() == js.TypeNumber {
-		port = uint16(p.Int())
+		// Checked as a float: Int would truncate 1.5, and uint16 wrap
+		// 65537. NaN != NaN, so NaN is rejected too.
+		f := p.Float()
+		if f < 1 || f > 65535 || f != math.Trunc(f) {
+			return rejectedPromise(errors.New("port must be an integer from 1 to 65535"))
+		}
+		port = uint16(f)
 	}
 	timeout := 60 * time.Second
 	if t := opts.Get("timeoutMs"); t.Type() == js.TypeNumber && t.Int() > 0 {
@@ -319,7 +335,7 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 			for {
 				n, err := c.Read(buf)
 				if n > 0 {
-					u8 := js.Global().Get("Uint8Array").New(n)
+					u8 := uint8Array.New(n)
 					js.CopyBytesToJS(u8, buf[:n])
 					return u8, nil
 				}
@@ -334,7 +350,9 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 		})
 	})
 	write := js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) != 1 {
+		// CopyBytesToGo panics on anything else, which would kill the
+		// engine.
+		if len(args) != 1 || !args[0].InstanceOf(uint8Array) {
 			return rejectedPromise(errors.New("write requires a Uint8Array"))
 		}
 		b := make([]byte, args[0].Get("length").Int())
@@ -382,6 +400,8 @@ func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 	jc.Set("close", closeFn)
 	return jc
 }
+
+var uint8Array = js.Global().Get("Uint8Array")
 
 // closedMethod and closedClose replace a closed Conn's (or Listener's)
 // methods. They're shared, so they hold on to nothing.
