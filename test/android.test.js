@@ -172,6 +172,28 @@ tests.share = async ({ device, shell, appPage }) => {
   return "shared file ready to send";
 };
 
+// Shared text that isn't a fileporter link: the start page must say
+// only files can be sent. (Sharing several files at once can't be
+// driven from here: am can't put the ArrayList<Uri> a share sheet sends
+// into an intent.)
+tests["share-text"] = async ({ shell, appPage }) => {
+  await shell(`am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'just-some-words' -n app.fileporter/.MainActivity`);
+  const page = await appPage();
+  await page.locator("#drop-error", { hasText: "Only files can be sent" }).waitFor({ timeout: 30_000 });
+  return "plain text refused";
+};
+
+// Shared text with a fileporter link in it opens that link (here one
+// that isn't valid, so no sender is needed: the app must show so).
+tests["share-link"] = async ({ shell, appPage }) => {
+  await shell(`am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'Here:https://fileporter.app/#Rnot-a-real-link' -n app.fileporter/.MainActivity`);
+  const page = await appPage();
+  await page.locator("#bad-link").waitFor({ timeout: 30_000 });
+  // Back to the start page for the tests after this one.
+  await page.evaluate(() => { location.href = "./"; });
+  return "link opened";
+};
+
 tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) => {
   const buffer = randomBytes(SIZE);
   const name = `upload-${Date.now()}.bin`;
