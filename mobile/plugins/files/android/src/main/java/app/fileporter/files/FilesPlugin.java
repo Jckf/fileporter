@@ -257,8 +257,8 @@ public class FilesPlugin extends Plugin {
          * use, outside the lock: a cloud provider may take seconds over
          * it, and drop() (from the main thread, or the one plugin calls
          * run on) mustn't wait for that. Ranges that miss it at the same
-         * time each open it; the first one in keeps its own and the
-         * others close theirs.
+         * time each open it; the first one in keeps its own (for a pipe,
+         * as the stream the first range reads) and the others close theirs.
          */
         AssetFileDescriptor acquire(ContentResolver resolver, Uri uri) throws IOException {
             synchronized (this) {

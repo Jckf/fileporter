@@ -46,9 +46,9 @@ watchConnectivity();
 let shared = null;
 /**
  * Whether to leave this page for something opened or shared to the app
- * ("open the new link instead"): asked while a transfer can still be
- * resumed, or while a received file waits to be saved (leaving forgets
- * it, though nothing's guarded then).
+ * ("open the new link instead"): asked while a transfer is under way
+ * (setGuard), or while a received file waits to be saved (leaving
+ * forgets it, though nothing's guarded then).
  */
 function mayLeave(instead) {
   if (!$("recv-save").hidden) return confirm(`The received file isn't saved yet. Leave it and ${instead}?`);
