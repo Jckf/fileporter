@@ -347,7 +347,12 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
     // A file we already have in full is only ever finished, not received
     // again: the sender starting over means its file changed.
-    if (st.status === "complete" && fromChunk !== st.chunks) throw new FatalError(FILE_CHANGED);
+    if (st.status === "complete" && fromChunk !== st.chunks) {
+      // Told, so the sender stops waiting for us to come back.
+      await link.send({ t: "cancel" }).catch(() => {});
+      await end();
+      throw new FatalError(FILE_CHANGED);
+    }
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
 
     const effective = effectiveMode(senderMode, state.rm);
