@@ -20,6 +20,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MiB, sleep, waitUntil, linkOf, parseBytes } from "./helpers.js";
 
 const BASE = process.env.BASE_URL || "http://localhost:8080/";
 const engines = { chromium, firefox, webkit };
@@ -90,7 +91,6 @@ async function rtcLoopbackWorks(engine) {
   }
 }
 
-const MiB = 1 << 20;
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 // Runs before any page script:
@@ -151,6 +151,18 @@ class Pair {
   static async open(engine, { senderBrowser = null, receiverBrowser = null } = {}) {
     const p = new Pair();
     p.profiles = [];
+    p.logs = [];
+    p.cleanup = [];
+    try {
+      await p.setUp(engine, senderBrowser, receiverBrowser);
+    } catch (err) {
+      await p.close().catch(() => {}); // what was created so far
+      throw err;
+    }
+    return p;
+  }
+  async setUp(engine, senderBrowser, receiverBrowser) {
+    const p = this;
     const ctx = async (browser) => {
       if (browser) return browser.newContext({ acceptDownloads: true });
       const dir = await mkdtemp(join(tmpdir(), "fileporter-profile-"));
@@ -163,19 +175,16 @@ class Pair {
     await p.rctx.addInitScript(initScript);
     p.sender = await p.sctx.newPage();
     p.receiver = await p.rctx.newPage();
-    p.logs = [];
-    p.cleanup = [];
     p.watch(p.sender, "S");
     p.watch(p.receiver, "R");
-    return p;
   }
   watch(page, name) {
     page.on("console", (m) => this.logs.push(`${name} ${m.type()}: ${m.text()}`));
     page.on("pageerror", (e) => this.logs.push(`${name} pageerror: ${e.message}`));
   }
   async close() {
-    await this.sctx.close();
-    await this.rctx.close();
+    await this.sctx?.close();
+    await this.rctx?.close();
     for (const fn of this.cleanup) await fn();
     for (const dir of this.profiles) await rm(dir, { recursive: true, force: true });
   }
@@ -188,10 +197,7 @@ class Pair {
     await s.check(`input[name="send-mode"][value="${mode}"]`);
     await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
     await s.click("#send-start");
-    return s.locator("#send-link").evaluate(async (el) => {
-      while (!el.value) await new Promise((r) => setTimeout(r, 100));
-      return el.value;
-    });
+    return linkOf(s);
   }
 
   async openReceiver(link, senderMode, receiverMode) {
@@ -214,19 +220,14 @@ class Pair {
   }
 
   async recvBytes() {
-    const t = (await this.receiver.textContent("#recv-progress-text")) || "";
-    const m = /^([\d.]+) (B|KB|MB|GB)/.exec(t);
-    if (!m) return 0;
-    return Number(m[1]) * { B: 1, KB: 1024, MB: MiB, GB: 1024 * MiB }[m[2]];
+    return parseBytes(await this.receiver.textContent("#recv-progress-text"));
   }
 
   async waitRecvAtLeast(bytes, timeout = 180_000) {
-    const end = Date.now() + timeout;
-    while ((await this.recvBytes()) < bytes) {
-      if (Date.now() > end) throw new Error(`receiver stuck below ${bytes} bytes`);
+    await waitUntil(async () => {
       if (await this.receiver.locator("#recv-save").isVisible()) throw new Error("finished before the checkpoint; use a bigger file");
-      await new Promise((r) => setTimeout(r, 200));
-    }
+      return (await this.recvBytes()) >= bytes;
+    }, timeout, `receiver stuck below ${bytes} bytes`);
   }
 
   async debug() {
@@ -253,6 +254,9 @@ async function assertCleanedUp(p) {
 
 const tests = {};
 
+/** "rtc" or "relay": the transport a transfer badge (ui.setBadge) shows. */
+const badgeVia = async (page, sel) => ((await page.getAttribute(sel, "class")) || "").split(" ").includes("direct") ? "rtc" : "relay";
+
 for (const [sm, rm, wantVia] of [
   ["privacy", "privacy", "relay"],
   ["privacy", "performance", "relay"],
@@ -273,12 +277,15 @@ for (const [sm, rm, wantVia] of [
     if ((await wake(p.receiver)).requests < 1) throw new Error("receiver: never asked for a wake lock");
     if (sha(got) !== hash) throw new Error("downloaded file hash mismatch");
     await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
-    const via = p.logs.some((l) => l.includes("direct connection failed")) ? "relay" : (sm === "performance" && rm === "performance" ? "rtc" : "relay");
+    // The transport each side actually used, as its badge shows it.
+    const [sentVia, via] = [await badgeVia(p.sender, "#send-badge"), await badgeVia(p.receiver, "#recv-badge")];
+    if (sentVia !== via) throw new Error(`sender used ${sentVia}, receiver ${via}`);
     if (via !== want) throw new Error(`transport ${via}, want ${want}`);
     const pcs = [await p.sender.evaluate(() => window.__pcCount), await p.receiver.evaluate(() => window.__pcCount)];
     if (rm === "privacy" || sm === "privacy") {
       if (pcs[0] || pcs[1]) throw new Error(`privacy leak: RTCPeerConnections created ${pcs}`);
     }
+    if (via === "rtc" && !(pcs[0] && pcs[1])) throw new Error(`direct transfer without peer connections: ${pcs}`);
     // The download worker saw the browser read every byte, so the
     // temporary copy goes without asking.
     await p.receiver.locator("#recv-cleared", { hasText: "Saved to your downloads" }).waitFor({ timeout: 30_000 });
@@ -601,27 +608,27 @@ tests["sweep"] = async (p) => {
   const id = (await opfsList(p.receiver))[0];
   if (!id) throw new Error("no OPFS data while receiving");
 
+  // Opens url in page and waits for the sweep it starts to finish.
+  const swept = async (page, url) => {
+    const done = page.waitForEvent("console", { predicate: (m) => m.text() === "sweep finished", timeout: 30_000 });
+    await page.goto(url);
+    await done;
+  };
+
   // A live transfer (lock held) survives a sweep even with zero grace.
   const other = await p.rctx.newPage();
-  await other.goto(BASE + "?sweepgrace=1");
-  await other.locator("#send-new").waitFor();
-  await new Promise((r) => setTimeout(r, 1500));
+  await swept(other, BASE + "?sweepgrace=1");
   if (!(await opfsList(other)).includes(id)) throw new Error("sweep deleted a live transfer");
 
   // Default grace: closing the tab (lock released) doesn't delete at once.
   p.receiver.removeAllListeners("dialog");
   await p.receiver.close({ runBeforeUnload: false });
-  await other.goto(BASE);
-  await new Promise((r) => setTimeout(r, 1500));
+  await swept(other, BASE);
   if (!(await opfsList(other)).includes(id)) throw new Error("sweep ignored the grace period");
 
   // Past the grace period: gone.
-  await other.goto(BASE + "?sweepgrace=1");
-  const end = Date.now() + 10_000;
-  while ((await opfsList(other)).includes(id)) {
-    if (Date.now() > end) throw new Error("abandoned transfer not swept");
-    await new Promise((r) => setTimeout(r, 300));
-  }
+  await swept(other, BASE + "?sweepgrace=1");
+  if ((await opfsList(other)).includes(id)) throw new Error("abandoned transfer not swept");
 };
 
 // Receiver URL with testing flags (see web/config.js) added.
@@ -636,8 +643,9 @@ tests["storage-support"] = async (p) => {
   await p.receiver.locator(want).waitFor({ timeout: 30_000 });
   if (await p.receiver.locator(other).isVisible()) throw new Error(`${other} shown too`);
   if (!p.storageWorks) {
-    // Must stay put, not dial the sender and fail in a loop.
-    await new Promise((r) => setTimeout(r, 3000));
+    // Must stay put, not dial the sender and fail in a loop. (An absence:
+    // nothing to wait for but time. A dial would fail within this.)
+    await sleep(3000);
     if (p.logs.some((l) => l.startsWith("R") && l.includes("session dropped"))) throw new Error("receiver retried without storage");
     // The way out: copy the link to open it in a normal window.
     await p.receiver.evaluate(() => {
@@ -870,19 +878,20 @@ for (const name of browsers) {
       // Without private-mode storage, only `always` tests get a private
       // receiver; the rest test a private sender against a normal one.
       const privateReceiver = browser && (works || fn.always);
-      const p = await Pair.open(engines[name], { senderBrowser: browser, receiverBrowser: privateReceiver ? browser : null });
-      p.storageWorks = works || !privateReceiver;
-      p.rtcWorks = rtcWorks;
       const t0 = Date.now();
+      let p = null;
       try {
+        p = await Pair.open(engines[name], { senderBrowser: browser, receiverBrowser: privateReceiver ? browser : null });
+        p.storageWorks = works || !privateReceiver;
+        p.rtcWorks = rtcWorks;
         let note = await fn(p);
         if (browser && !privateReceiver) note = `${note || ""} (private sender, normal receiver)`.trim();
         console.log(`PASS ${label} ${tname.padEnd(34)} ${((Date.now() - t0) / 1000).toFixed(1)}s ${note || ""}`);
       } catch (err) {
         failed++;
-        console.log(`FAIL ${label} ${tname}: ${err.message}\n${await p.debug()}`);
+        console.log(`FAIL ${label} ${tname}: ${err.message}\n${p ? await p.debug() : "(setting up the browsers failed)"}`);
       } finally {
-        await p.close().catch(() => {});
+        await p?.close().catch(() => {});
       }
     }
     await browser?.close();

@@ -30,6 +30,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { MiB, waitUntil, linkOf, parseBytes } from "./helpers.js";
 
 const BASE = process.env.BASE_URL || "http://localhost:8080/";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -39,10 +40,12 @@ const CONTAINER = REUSE || "fileporter-android-test";
 const only = (process.argv.find((a) => a.startsWith("--only=")) || "").slice(7).split(",").filter(Boolean);
 const APK = "mobile/android/app/build/outputs/apk/debug/app-debug.apk";
 const ADB_PORT = 5137; // mobile/emulator's
-const MiB = 1 << 20;
 const SIZE = Number(process.env.FP_SIZE_MIB || 24) * MiB;
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 const step = (msg) => console.log(`${new Date().toISOString().slice(11, 19)} ${msg}`);
+
+// Booting from cold, image download aside, takes a few minutes.
+const EMULATOR_TIMEOUT_MS = Number(process.env.FP_EMULATOR_TIMEOUT_S || 600) * 1000;
 
 function startEmulator() {
   const p = spawn(`${ROOT}/mobile/run`, ["mobile/emulator"], {
@@ -50,12 +53,16 @@ function startEmulator() {
     stdio: ["ignore", "pipe", "inherit"],
   });
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      stopEmulator();
+      reject(new Error(`emulator not ready after ${EMULATOR_TIMEOUT_MS / 1000} s`));
+    }, EMULATOR_TIMEOUT_MS);
     let out = "";
     p.stdout.on("data", (d) => {
       out += d;
-      if (/^ready$/m.test(out)) resolve(p);
+      if (/^ready$/m.test(out)) { clearTimeout(timer); resolve(p); }
     });
-    p.on("exit", (code) => reject(new Error(`emulator container exited (${code})`)));
+    p.on("exit", (code) => { clearTimeout(timer); reject(new Error(`emulator container exited (${code})`)); });
   });
 }
 
@@ -69,10 +76,6 @@ const stopEmulator = () => {
 // is a download Playwright can capture.
 const desktopInit = () => { delete window.showSaveFilePicker; };
 
-const parseBytes = (t) => {
-  const m = /^([\d.]+) (B|KB|MB|GB)/.exec(t || "");
-  return m ? Number(m[1]) * { B: 1, KB: 1024, MB: MiB, GB: 1024 * MiB }[m[2]] : 0;
-};
 
 const tests = {};
 
@@ -87,10 +90,7 @@ tests["receive-save"] = async ({ desktop, shell, find, tap, appPage }) => {
   await s.check('input[name="send-mode"][value="privacy"]');
   await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
   await s.click("#send-start");
-  const link = await s.locator("#send-link").evaluate(async (el) => {
-    while (!el.value) await new Promise((r) => setTimeout(r, 100));
-    return el.value;
-  });
+  const link = await linkOf(s);
   // As shared from fileporter.app (the sender here is localhost).
   const appLink = "https://fileporter.app/" + new URL(link).hash;
 
@@ -102,23 +102,13 @@ tests["receive-save"] = async ({ desktop, shell, find, tap, appPage }) => {
   // once back.
   await page.locator("#recv-active").waitFor({ timeout: 60_000 });
   const posted = async () => /NotificationRecord\(\S+ pkg=app\.fileporter user=\S+ id=1 /.test(await shell("dumpsys notification"));
-  let end = Date.now() + 10_000;
-  while (await posted()) { // one from an earlier run is removed at start
-    if (Date.now() > end) throw new Error("stale notification not removed at start");
-    await new Promise((r) => setTimeout(r, 500));
-  }
+  const gone = async () => !(await posted());
+  // (One from an earlier run is removed at start.)
+  await waitUntil(gone, 10_000, "stale notification not removed at start", 500);
   await shell("input keyevent KEYCODE_HOME");
-  end = Date.now() + 10_000;
-  while (!(await posted())) {
-    if (Date.now() > end) throw new Error("no \"Transfer paused\" notification");
-    await new Promise((r) => setTimeout(r, 500));
-  }
+  await waitUntil(posted, 10_000, "no \"Transfer paused\" notification", 500);
   await shell("am start -W -n app.fileporter/.MainActivity");
-  end = Date.now() + 10_000;
-  while (await posted()) {
-    if (Date.now() > end) throw new Error("notification not removed on return");
-    await new Promise((r) => setTimeout(r, 500));
-  }
+  await waitUntil(gone, 10_000, "notification not removed on return", 500);
   step("paused and back");
 
   await page.locator("#recv-save").waitFor({ timeout: 300_000 });
@@ -198,21 +188,16 @@ tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) =>
   await page.check('input[name="send-mode"][value="privacy"]');
   await page.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
   await page.click("#send-start");
-  const link = await page.locator("#send-link").evaluate(async (el) => {
-    while (!el.value) await new Promise((r) => setTimeout(r, 100));
-    return el.value;
-  });
+  const link = await linkOf(page);
 
   step("receiving on the desktop");
   const r = await desktop.newPage();
   await r.goto(BASE + new URL(link).hash);
   await r.locator("#recv-active").waitFor();
-  const end = Date.now() + 180_000;
-  while (parseBytes(await r.textContent("#recv-progress-text")) < SIZE / 4) {
-    if (Date.now() > end) throw new Error("receiver stuck");
+  await waitUntil(async () => {
     if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the restart; use a bigger file");
-    await new Promise((res) => setTimeout(res, 200));
-  }
+    return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
+  }, 180_000, "receiver stuck");
 
   step("restarting the app mid-transfer");
   await shell("am force-stop app.fileporter");
@@ -252,17 +237,15 @@ async function main() {
     // re, waiting for one to appear. (uiautomator dump: stock adb, no
     // driver app needed.)
     const find = async (re, timeout = 30_000) => {
-      const end = Date.now() + timeout;
-      for (;;) {
+      return waitUntil(async () => {
         const xml = await shell("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml");
         for (const [node] of xml.matchAll(/<node [^>]*>/g)) {
           const text = /\btext="([^"]*)"/.exec(node)?.[1];
           const b = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
           if (text && b && re.test(text)) return { x: (+b[1] + +b[3]) >> 1, y: (+b[2] + +b[4]) >> 1 };
         }
-        if (Date.now() > end) throw new Error(`nothing on screen matches ${re}`);
-        await new Promise((r) => setTimeout(r, 500));
-      }
+        return null;
+      }, timeout, `nothing on screen matches ${re}`, 500);
     };
     const tap = async ({ x, y }) => shell(`input tap ${x} ${y}`);
     const appPage = async () => {

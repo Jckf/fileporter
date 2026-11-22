@@ -117,7 +117,8 @@ export async function startSweeping(keep) {
   if (!(await storage.supported())) return;
   const run = () => storage.sweep(keep, config.sweepGraceMs)
     .then((ids) => Promise.all(ids.map(savetarget.forget)))
-    .catch((err) => console.warn("sweep failed", err));
+    .catch((err) => console.warn("sweep failed", err))
+    .then(() => console.debug("sweep finished")); // (the tests wait for it)
   await run();
   setInterval(run, 5 * 60 * 1000);
 }
