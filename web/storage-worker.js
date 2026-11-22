@@ -48,12 +48,27 @@ const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, "0")).join(
 const sha256 = async (bytes) => new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 const enc = new TextEncoder();
 
+// Rewrites meta.json in place without ever leaving it unparseable: an
+// empty or cut-off meta.json reads as "no transfer here", which would
+// throw away the partial download (open) or its folder (sweep). So no
+// truncating first: a shorter new text is padded with spaces to the old
+// length (JSON.parse ignores trailing whitespace), and trimmed only
+// once it's safely written.
 async function writeMeta(st) {
   st.metaObj.lastActive = Date.now();
-  const bytes = enc.encode(JSON.stringify(st.metaObj));
-  await st.meta.truncate(0);
+  const json = enc.encode(JSON.stringify(st.metaObj));
+  const old = await st.meta.getSize();
+  let bytes = json;
+  if (old > json.length) {
+    bytes = new Uint8Array(old).fill(0x20);
+    bytes.set(json);
+  }
   await st.meta.write(bytes, { at: 0 });
   await st.meta.flush();
+  if (old > json.length) {
+    await st.meta.truncate(json.length);
+    await st.meta.flush();
+  }
 }
 
 async function readMetaHandle(h) {
