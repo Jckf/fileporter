@@ -19,6 +19,11 @@
 //                 receiver reloads halfway, so the sender goes back
 //   send-part     likewise, a file shared as part of a bigger one (the
 //                 debug build's PartProvider: an offset and a length)
+//   send-links    while the app sends, its own link opened or shared,
+//                 and text shared, do nothing; another link opened asks
+//                 first, and declining keeps the transfer
+//   unsaved-link  another link opened while a received file waits to
+//                 be saved asks first; declining keeps it
 //
 // Needs Docker, /dev/kvm and internet (tailcat's public DERP relays).
 // Build the APK first (mobile/run mobile/build android), then:
@@ -337,6 +342,120 @@ tests["send-part"] = async ({ desktop, device, shell, appPage }) => {
   return `${SIZE / MiB} MiB at offset ${before.length} of a bigger file sent across a receiver reload, hash OK`;
 };
 
+// What a confirm() in the app's web view shows (Capacitor's dialog).
+const STOP_FOR_LINK = /^Stop this transfer and open the new link instead\?$/;
+const UNSAVED_FOR_LINK = /^The received file isn't saved yet\. Leave it and open the new link instead\?$/;
+const CANCEL = /^cancel$/i;
+// A fileporter link, as tapped or shared, to a transfer other than any
+// under way (not a valid one: nothing needs to be at the other end).
+const OTHER_LINK = "https://fileporter.app/#Rnot-a-real-link";
+const openLink = (shell, link) => shell(`am start -W -a android.intent.action.VIEW -d '${link}' app.fileporter`);
+const shareText = (shell, text) => shell(`am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${text}' -n app.fileporter/.MainActivity`);
+
+/**
+ * Marks page, so stays(page, what) can tell it's still the same page
+ * (not reloaded, nor left) and showing section id.
+ */
+const mark = (page) => page.evaluate(() => { window.testMark = true; });
+async function stays(page, id, what) {
+  const ok = await page.evaluate((id) => window.testMark === true && !document.getElementById(id).hidden, id);
+  if (!ok) throw new Error(`${what}: no longer on #${id} of the same page`);
+}
+
+// While the app sends (from the moment it waits for the recipient: no
+// receiver needed), what's opened or shared to it: its own transfer's
+// link, tapped or shared, does nothing (no question, no reload); nor
+// does shared text that isn't a link; another link asks first, and
+// declining keeps the transfer.
+tests["send-links"] = async ({ device, shell, find, absent, tap, appPage }) => {
+  const name = `guarded-${Date.now()}.bin`;
+  const uri = await pushDownload(device, shell, name, randomBytes(MiB));
+  await shell("am force-stop app.fileporter");
+  await shell(`am start -W -a android.intent.action.SEND -t application/octet-stream -d ${uri} --eu android.intent.extra.STREAM ${uri} --grant-read-uri-permission -n app.fileporter/.MainActivity`);
+  const page = await appPage();
+  await page.locator("#send-file-card:visible").waitFor({ timeout: 30_000 });
+  await page.check('input[name="send-mode"][value="privacy"]');
+  await page.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+  await page.click("#send-start");
+  // As shared from fileporter.app (it's the receiver's link).
+  const own = "https://fileporter.app/" + new URL(await linkOf(page)).hash;
+  await page.locator("#send-active").waitFor();
+  await mark(page);
+
+  step("opening its own link");
+  await openLink(shell, own);
+  await absent(STOP_FOR_LINK);
+  await stays(page, "send-active", "own link opened");
+
+  step("sharing its own link");
+  await shareText(shell, `Here: ${own}`);
+  await absent(STOP_FOR_LINK);
+  await stays(page, "send-active", "own link shared");
+
+  step("sharing text that isn't a link");
+  await shareText(shell, "just-some-words");
+  await absent(/^Stop this transfer/);
+  await stays(page, "send-active", "text shared");
+
+  step("opening another link");
+  await openLink(shell, OTHER_LINK);
+  await find(STOP_FOR_LINK, 10_000);
+  await tap(await find(CANCEL));
+  await absent(STOP_FOR_LINK, 2_000);
+  await stays(page, "send-active", "other link declined");
+
+  // Done: cancel the send, and back to the start page for the tests
+  // after this one.
+  await page.click("#send-cancel");
+  await page.locator("#cancelled").waitFor({ timeout: 30_000 });
+  await page.evaluate(() => { location.href = "./"; });
+  return "own link and text ignored while sending, another link asked about";
+};
+
+/**
+ * Sends buffer (as name) from the desktop to the app, opened on the
+ * link as tapping it would, until the app has it ready to save; then
+ * calls then(page) with the app's page, closing the sender after.
+ */
+async function receiveInApp(desktop, shell, appPage, name, buffer, then) {
+  const s = await desktop.newPage();
+  try {
+    await s.goto(BASE);
+    await s.locator("#send-new").waitFor();
+    await s.setInputFiles("#send-file", { name, mimeType: "application/octet-stream", buffer });
+    await s.check('input[name="send-mode"][value="privacy"]');
+    await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+    await s.click("#send-start");
+    const link = "https://fileporter.app/" + new URL(await linkOf(s)).hash;
+    step("receiving in the app");
+    // From a stopped app: one still in a transfer would ask first.
+    await shell("am force-stop app.fileporter");
+    await openLink(shell, link);
+    const page = await appPage();
+    await page.locator("#recv-save").waitFor({ timeout: 300_000 });
+    return await then(page);
+  } finally {
+    await s.close();
+  }
+}
+
+// A received file waiting to be saved isn't guarded as a transfer is,
+// but leaving forgets it: another link opened asks first, and declining
+// keeps the save step.
+tests["unsaved-link"] = async ({ desktop, shell, find, tap, appPage }) => {
+  return receiveInApp(desktop, shell, appPage, `unsaved-${Date.now()}.bin`, randomBytes(MiB), async (page) => {
+    await mark(page);
+    step("opening another link");
+    await openLink(shell, OTHER_LINK);
+    await find(UNSAVED_FOR_LINK, 10_000);
+    await tap(await find(CANCEL));
+    await page.locator("#recv-save-btn:enabled").waitFor();
+    await stays(page, "recv-save", "other link declined");
+    await page.evaluate(() => { location.href = "./"; });
+    return "another link asked about, declining kept the file to save";
+  });
+};
+
 async function main() {
   if (!(await fetch(BASE).then((r) => r.ok, () => false))) throw new Error(`nothing served at ${BASE} (cmd/devserver)`);
   if (!REUSE) {
@@ -355,19 +474,46 @@ async function main() {
     const shell = async (cmd) => (await device.shell(cmd)).toString();
     // (Playwright's installApk hangs here; the container's adb doesn't.)
     if (REUSE) execFileSync("docker", ["exec", "-e", `ANDROID_ADB_SERVER_PORT=${ADB_PORT}`, CONTAINER, "adb", "install", "-r", "-g", `/src/${APK}`], { stdio: "ignore" });
-    // The bounds' centre of the first on-screen view whose text matches
-    // re, waiting for one to appear. (uiautomator dump: stock adb, no
-    // driver app needed.)
+    // The on-screen views' texts, with their bounds' centres, or null if
+    // the dump failed. (uiautomator dump: stock adb, no driver app
+    // needed. The old dump is removed first, so a failed one isn't read
+    // as what's on screen now.)
+    const onScreen = async () => {
+      const xml = await shell("rm -f /sdcard/ui.xml; uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml 2>/dev/null");
+      if (!xml.includes("<hierarchy")) return null;
+      const views = [];
+      for (const [node] of xml.matchAll(/<node [^>]*>/g)) {
+        const text = /\btext="([^"]*)"/.exec(node)?.[1];
+        const b = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
+        if (!text || !b) continue;
+        const plain = text.replace(/&(quot|apos|lt|gt|amp);/g, (_, e) => ({ quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" })[e]);
+        views.push({ text: plain, x: (+b[1] + +b[3]) >> 1, y: (+b[2] + +b[4]) >> 1 });
+      }
+      return views;
+    };
+    // The centre of the first on-screen view whose text matches re,
+    // waiting for one to appear.
     const find = async (re, timeout = 30_000) => {
       return waitUntil(async () => {
-        const xml = await shell("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml");
-        for (const [node] of xml.matchAll(/<node [^>]*>/g)) {
-          const text = /\btext="([^"]*)"/.exec(node)?.[1];
-          const b = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
-          if (text && b && re.test(text)) return { x: (+b[1] + +b[3]) >> 1, y: (+b[2] + +b[4]) >> 1 };
-        }
-        return null;
+        const v = (await onScreen())?.find((v) => re.test(v.text));
+        return v ? { x: v.x, y: v.y } : null;
       }, timeout, `nothing on screen matches ${re}`, 500);
+    };
+    // Throws if a view whose text matches re shows up within ms (looked
+    // for in at least two dumps that worked).
+    const absent = async (re, ms = 5_000) => {
+      const end = Date.now() + ms;
+      let looked = 0;
+      while (Date.now() < end || looked < 2) {
+        const views = await onScreen();
+        if (views) {
+          looked++;
+          const v = views.find((v) => re.test(v.text));
+          if (v) throw new Error(`on screen: ${v.text}`);
+        }
+        if (Date.now() > end + 30_000) throw new Error("uiautomator dump keeps failing");
+        await new Promise((r) => setTimeout(r, 300));
+      }
     };
     const tap = async ({ x, y }) => shell(`input tap ${x} ${y}`);
     const appPage = async () => {
@@ -382,7 +528,7 @@ async function main() {
       if (only.length && !only.includes(name)) continue;
       step(`${name}…`);
       try {
-        step(`PASS ${name}: ${await test({ desktop, device, shell, find, tap, appPage })}`);
+        step(`PASS ${name}: ${await test({ desktop, device, shell, find, absent, tap, appPage })}`);
       } catch (err) {
         failed++;
         console.error(`FAIL ${name}:`, err);
