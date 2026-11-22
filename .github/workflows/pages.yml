@@ -53,6 +53,10 @@ jobs:
         run: |
           tags=$(go run ./cmd/build -print-tags)
           PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test -tags "$tags" ./cmd/engine
+      # The build tools' own tests, for the runner's platform. -short
+      # skips the whole-build test: the next step does the build.
+      - name: Test build tools
+        run: go test -short ./cmd/build ./cmd/devserver ./cmd/splash
       - name: Build site
         run: go run ./cmd/build -o dist
       # Built here, where Go is set up and cached, so the test jobs need
