@@ -270,8 +270,11 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
       for (let i = from; i < n; i++) {
         await until(() => i - acked < windowFor(transport));
         const bytes = await readChunk(file, i);
-        hashes.set(i, await sha256(bytes));
+        // Hashed while it's sent, not before: digest() copies its input
+        // when called, and both transports copy the bytes they send.
+        const hashed = sha256(bytes);
         await transport.sendChunk(i, bytes);
+        hashes.set(i, await hashed);
       }
       await until(() => acked >= n);
     } catch (err) {
