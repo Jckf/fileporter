@@ -354,7 +354,7 @@ details.explain p { margin: 8px 0 0; }
 
 .transfer { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
 
-/* Shown when no data has moved for a while (app.js, stallWatch). */
+/* Shown when no data has moved for a while (shell.js, stallWatch). */
 .stall {
   margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-sm);
   color: var(--warn); background: var(--warn-soft);

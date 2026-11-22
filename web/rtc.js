@@ -5,9 +5,10 @@
 //
 // Privacy is enforced locally, in two layers:
 //   1. lockOutWebRTC() replaces the RTCPeerConnection constructors with
-//      ones that throw. app.js calls it as soon as the local user picks
-//      privacy (or the sender's link says privacy), before any engine
-//      call, so no ICE gathering can ever start in this page.
+//      ones that throw. sender.js and receiver.js call it as soon as
+//      the user picks privacy (or the sender's link says privacy),
+//      before any engine call, so no ICE gathering can ever start in
+//      this page.
 //   2. connect() refuses unless both local and effective modes are
 //      "performance".
 // Neither the peer nor an edited link can turn this back on.

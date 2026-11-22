@@ -104,7 +104,7 @@
     </a>
   </header>
 
-  <!-- One-off announcements for screen readers (app.js announce()). -->
+  <!-- One-off announcements for screen readers (shell.js announce()). -->
   <p id="announce" class="visually-hidden" role="status" aria-live="polite"></p>
   <div id="offline" class="offline" role="status" hidden>
     <svg class="icon"><use href="#i-alert"/></svg>
@@ -154,7 +154,7 @@
             <p><strong>Private</strong> passes everything through a relay server, so neither of you sees the other's IP address. The relay only forwards encrypted data and can't read your file. It's slower.</p>
             <p><strong>Fast</strong> connects your devices directly when the network allows it. It's much quicker, but you can see each other's IP addresses. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
           </details>
-          <!-- Shown while Fast is chosen (app.js, turn.js) -->
+          <!-- Shown while Fast is chosen (sender.js, turn.js) -->
           <details id="turn-settings" class="explain" hidden>
             <summary>Use your own relay server</summary>
             <p>When your devices can't connect directly, a TURN server of yours can pass the data along, much faster than fileporter's relay. It's only used if you and the recipient both choose Fast. The recipient gets the server's address and login through the encrypted connection, never in the link. Saved on this device only.</p>
