@@ -321,13 +321,17 @@ func pingUntil(ctx context.Context, cl *tailcat.Client) error {
 //	{
 //	  port: number,
 //	  read: () => Promise<Uint8Array|null>, // null on EOF; no concurrent calls
-//	  write: (Uint8Array) => Promise,
+//	  write: (Uint8Array) => Promise,     // wait for each before the next
 //	  closeWrite: () => Promise,
 //	  close: () => void,
 //	}
 //
 // read is pull-based, so a fast sender stalls on TCP backpressure
 // instead of filling memory.
+//
+// Each write runs in its own goroutine, so writes started before the
+// previous one settled could reach the connection in any order; the
+// worker's callers chain them (web/framing.js).
 //
 // close releases the methods' js.Funcs. syscall/js keeps every Func in
 // a global table until then, and with it the conn, its read buffer and
