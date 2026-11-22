@@ -143,6 +143,7 @@ jobs:
       # address: Firefox won't use loopback ones. (WebKit can't connect
       # directly here at all, so it skips the test.)
       - name: Start TURN server
+        id: turn
         if: matrix.browser != 'webkit'
         run: |
           ip=$(ip -4 route get 1.1.1.1 | grep -oP 'src \K[\d.]+')
@@ -156,9 +157,8 @@ jobs:
         run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
       # turn-lanes failing says little without the TURN server's side.
       - name: TURN server log
-        if: failure() && matrix.browser != 'webkit'
-        # (Not started if an earlier step failed: nothing to add then.)
-        run: if docker inspect turn >/dev/null 2>&1; then docker logs turn 2>&1 | tail -200; fi
+        if: failure() && steps.turn.outcome == 'success'
+        run: docker logs turn 2>&1 | tail -200
 
   deploy:
     needs: [build, test, lint]
