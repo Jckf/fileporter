@@ -283,13 +283,15 @@ function setupShare(link) {
   // user picks, which is what they asked for; offer it only where it
   // exists (mostly mobile).
   const nativeShare = platform.plugin("Share");
-  if (nativeShare) {
+  const share = nativeShare ? (d) => nativeShare.share(d)
+    : navigator.share && navigator.canShare?.({ url: link }) ? (d) => navigator.share(d)
+      : null;
+  if (share) {
     $("send-via-app").hidden = false;
-    $("send-via-app").onclick = () => nativeShare.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
-  } else if (navigator.share && navigator.canShare?.({ url: link })) {
-    $("send-via-app").hidden = false;
-    $("send-via-app").onclick = () => navigator.share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
+    $("send-via-app").onclick = () => share({ title: "fileporter", text: "A file for you:", url: link }).catch(() => {});
   }
+  // Only now that they work.
+  $("send-invite").hidden = false;
 }
 
 async function startSender(state, file) {
@@ -307,6 +309,7 @@ async function startSender(state, file) {
   setText("send-active-size", fmtBytes(file.size));
   setText("send-active-ext", ui.fileExt(file.name));
   setText("send-active-status", "Starting…");
+  $("send-invite").hidden = true; // until setupShare: there's no link yet
   const shown = ui.progressView("send-progress", "send-progress-text", file.size);
   // Reconnecting drops this session; the recipient redials.
   const stall = stallWatch("send", file.size, () => currentCtl?.stop?.());
