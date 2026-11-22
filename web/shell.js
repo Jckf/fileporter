@@ -86,6 +86,7 @@ engine.onProgress((s) => {
       break;
     case "retrying":
       label.textContent = "Still getting ready. Trying again…";
+      if (s.attempt === 1) announce(label.textContent);
       break;
     case "ready":
       status.dataset.state = "ready";
@@ -97,6 +98,7 @@ engine.onProgress((s) => {
       engineError = s.error;
       console.warn("engine failed:", s.error);
       label.textContent = ENGINE_FAILED;
+      if (!engineReady) announce(ENGINE_FAILED); // (after it was ready, the transfer's screen says so)
       failedCallbacks.forEach((fn) => fn());
       break;
   }

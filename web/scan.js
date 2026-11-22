@@ -84,7 +84,9 @@ async function scan() {
           finish(hash);
           return;
         }
-        status.textContent = "That QR code isn't a fileporter link.";
+        // (Only on change: it's a live region, and this runs every frame.)
+        const text = "That QR code isn't a fileporter link.";
+        if (status.textContent !== text) status.textContent = text;
       }
     }
     timer = setTimeout(tick, INTERVAL_MS);

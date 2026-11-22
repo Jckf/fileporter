@@ -151,18 +151,22 @@ async function receiverLoop(state) {
   for (let attempt = 0; !recvStopped; attempt++) {
     if (attempt) {
       const wait = Math.min(5, attempt);
-      // Said once; the status line counts down silently meanwhile.
-      announce("Connection lost. Trying again shortly. The sender needs to keep fileporter open.");
+      // Said once per outage, not on every redial; the status line counts
+      // down silently meanwhile.
+      if (attempt === 1) announce("Connection lost. Trying again until the sender is back. They need to keep fileporter open.");
       const status = $("recv-active-status");
       status.setAttribute("aria-live", "off");
       for (let s = wait; s > 0 && !recvStopped; s--) {
         setText("recv-active-status", `Connection lost. Trying again in ${s} s. The sender needs to keep fileporter open.`);
         await sleep(1000);
       }
+      // (Still silent: not announced on every redial either.)
+      setText("recv-active-status", "Connecting…");
       status.setAttribute("aria-live", "polite");
       if (recvStopped) return;
+    } else {
+      setText("recv-active-status", "Connecting…");
     }
-    setText("recv-active-status", "Connecting…");
     let conn;
     try {
       conn = await engine.dial({ addr: state.a, derpMapURL: config.derpMapURL, clientKey: state.k, timeoutMs: DIAL_TIMEOUT_MS, verbose: config.verbose });

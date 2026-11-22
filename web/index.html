@@ -172,7 +172,8 @@
         </fieldset>
 
         <button id="send-start" class="primary block" disabled>Getting ready…</button>
-        <div id="engine-status" data-state="loading" role="status" aria-live="polite">
+        <!-- Not a live region: its percentage changes constantly; shell.js announces what matters. -->
+        <div id="engine-status" data-state="loading">
           <span class="bar mini"><progress id="engine-progress" max="1" value="0" aria-label="Getting ready"></progress></span>
           <span id="engine-label">Preparing secure connection…</span>
         </div>
