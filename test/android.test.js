@@ -84,69 +84,74 @@ tests["receive-save"] = async ({ desktop, shell, find, tap, appPage }) => {
   // Unique: the Save dialog renames a file that already exists.
   const name = `payload-${Date.now()}.bin`;
   const s = await desktop.newPage();
-  await s.goto(BASE);
-  await s.locator("#send-new").waitFor();
-  await s.setInputFiles("#send-file", { name, mimeType: "application/octet-stream", buffer });
-  await s.check('input[name="send-mode"][value="privacy"]');
-  await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
-  await s.click("#send-start");
-  const link = await linkOf(s);
-  // As shared from fileporter.app (the sender here is localhost).
-  const appLink = "https://fileporter.app/" + new URL(link).hash;
+  // Closed however this ends: a sender left open would keep its session
+  // going into the next test.
+  try {
+    await s.goto(BASE);
+    await s.locator("#send-new").waitFor();
+    await s.setInputFiles("#send-file", { name, mimeType: "application/octet-stream", buffer });
+    await s.check('input[name="send-mode"][value="privacy"]');
+    await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+    await s.click("#send-start");
+    const link = await linkOf(s);
+    // As shared from fileporter.app (the sender here is localhost).
+    const appLink = "https://fileporter.app/" + new URL(link).hash;
 
-  step("opening the link in the app");
-  await shell(`am start -W -a android.intent.action.VIEW -d '${appLink}' app.fileporter`);
-  const page = await appPage();
+    step("opening the link in the app");
+    await shell(`am start -W -a android.intent.action.VIEW -d '${appLink}' app.fileporter`);
+    const page = await appPage();
 
-  // Put in the background mid-transfer: "Transfer paused", gone again
-  // once back.
-  await page.locator("#recv-active").waitFor({ timeout: 60_000 });
-  const posted = async () => /NotificationRecord\(\S+ pkg=app\.fileporter user=\S+ id=1 /.test(await shell("dumpsys notification"));
-  const gone = async () => !(await posted());
-  // (One from an earlier run is removed at start.)
-  await waitUntil(gone, 10_000, "stale notification not removed at start", 500);
-  await shell("input keyevent KEYCODE_HOME");
-  await waitUntil(posted, 10_000, "no \"Transfer paused\" notification", 500);
-  await shell("am start -W -n app.fileporter/.MainActivity");
-  await waitUntil(gone, 10_000, "notification not removed on return", 500);
-  step("paused and back");
+    // Put in the background mid-transfer: "Transfer paused", gone again
+    // once back.
+    await page.locator("#recv-active").waitFor({ timeout: 60_000 });
+    const posted = async () => /NotificationRecord\(\S+ pkg=app\.fileporter user=\S+ id=1 /.test(await shell("dumpsys notification"));
+    const gone = async () => !(await posted());
+    // (One from an earlier run is removed at start.)
+    await waitUntil(gone, 10_000, "stale notification not removed at start", 500);
+    await shell("input keyevent KEYCODE_HOME");
+    await waitUntil(posted, 10_000, "no \"Transfer paused\" notification", 500);
+    await shell("am start -W -n app.fileporter/.MainActivity");
+    await waitUntil(gone, 10_000, "notification not removed on return", 500);
+    step("paused and back");
 
-  await page.locator("#recv-save").waitFor({ timeout: 300_000 });
-  step("received");
+    await page.locator("#recv-save").waitFor({ timeout: 300_000 });
+    step("received");
 
-  // Closing the dialog leaves the file in place, ready to save again.
-  await page.click("#recv-save-btn");
-  await find(/^save$/i);
-  await shell("input keyevent KEYCODE_BACK");
-  await page.locator("#recv-save-btn:enabled").waitFor();
-  if (!(await page.locator("#recv-save").isVisible())) throw new Error("left the save step after cancelling");
+    // Closing the dialog leaves the file in place, ready to save again.
+    await page.click("#recv-save-btn");
+    await find(/^save$/i);
+    await shell("input keyevent KEYCODE_BACK");
+    await page.locator("#recv-save-btn:enabled").waitFor();
+    if (!(await page.locator("#recv-save").isVisible())) throw new Error("left the save step after cancelling");
 
-  step("saving");
-  await page.click("#recv-save-btn");
-  const saveButton = await find(/^save$/i);
-  const t0 = Date.now();
-  await tap(saveButton);
-  await page.locator("#recv-cleared").waitFor({ timeout: 120_000 });
-  const secs = (Date.now() - t0) / 1000;
-  const text = await page.textContent("#recv-cleared-text");
-  if (!/^Saved\./.test(text)) throw new Error(`unexpected result: ${text}`);
+    step("saving");
+    await page.click("#recv-save-btn");
+    const saveButton = await find(/^save$/i);
+    const t0 = Date.now();
+    await tap(saveButton);
+    await page.locator("#recv-cleared").waitFor({ timeout: 120_000 });
+    const secs = (Date.now() - t0) / 1000;
+    const text = await page.textContent("#recv-cleared-text");
+    if (!/^Saved\./.test(text)) throw new Error(`unexpected result: ${text}`);
 
-  const saved = (await shell(`sha256sum /sdcard/Download/${name}`)).split(/\s/)[0];
-  if (saved !== sha(buffer)) throw new Error(`saved file differs: ${saved}`);
-  const left = await page.evaluate(async () => {
-    const names = [];
-    try {
-      const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("fileporter");
-      for await (const n of dir.keys()) names.push(n);
-    } catch {}
-    return names;
-  });
-  // This transfer's (a reused emulator may hold others, swept later): its
-  // id is bytes 1..12 of the receiver link's fragment.
-  const id = Buffer.from(new URL(link).hash.slice(2), "base64url").subarray(1, 13).toString("hex");
-  if (left.includes(id)) throw new Error(`temporary copy left behind: ${id}`);
-  await s.close();
-  return `${SIZE / MiB} MiB saved in ${secs.toFixed(1)} s (${(SIZE / MiB / secs).toFixed(1)} MiB/s), hash OK`;
+    const saved = (await shell(`sha256sum /sdcard/Download/${name}`)).split(/\s/)[0];
+    if (saved !== sha(buffer)) throw new Error(`saved file differs: ${saved}`);
+    const left = await page.evaluate(async () => {
+      const names = [];
+      try {
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("fileporter");
+        for await (const n of dir.keys()) names.push(n);
+      } catch {}
+      return names;
+    });
+    // This transfer's (a reused emulator may hold others, swept later): its
+    // id is bytes 1..12 of the receiver link's fragment.
+    const id = Buffer.from(new URL(link).hash.slice(2), "base64url").subarray(1, 13).toString("hex");
+    if (left.includes(id)) throw new Error(`temporary copy left behind: ${id}`);
+    return `${SIZE / MiB} MiB saved in ${secs.toFixed(1)} s (${(SIZE / MiB / secs).toFixed(1)} MiB/s), hash OK`;
+  } finally {
+    await s.close();
+  }
 };
 
 /** Puts bytes in the device's Downloads, indexed; returns its content URI. */
@@ -214,27 +219,30 @@ tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) =>
 
   step("receiving on the desktop");
   const r = await desktop.newPage();
-  await r.goto(BASE + new URL(link).hash);
-  await r.locator("#recv-active").waitFor();
-  await waitUntil(async () => {
-    if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the restart; use a bigger file");
-    return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
-  }, 180_000, "receiver stuck");
+  try {
+    await r.goto(BASE + new URL(link).hash);
+    await r.locator("#recv-active").waitFor();
+    await waitUntil(async () => {
+      if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the restart; use a bigger file");
+      return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
+    }, 180_000, "receiver stuck");
 
-  step("restarting the app mid-transfer");
-  await shell("am force-stop app.fileporter");
-  await shell("am start -W -n app.fileporter/.MainActivity");
-  page = await appPage();
-  await page.locator("#send-active:visible, #send-resume:visible").first().waitFor({ timeout: 60_000 });
-  if (await page.locator("#send-resume").isVisible()) throw new Error("asked for the file again");
+    step("restarting the app mid-transfer");
+    await shell("am force-stop app.fileporter");
+    await shell("am start -W -n app.fileporter/.MainActivity");
+    page = await appPage();
+    await page.locator("#send-active:visible, #send-resume:visible").first().waitFor({ timeout: 60_000 });
+    if (await page.locator("#send-resume").isVisible()) throw new Error("asked for the file again");
 
-  await r.locator("#recv-save").waitFor({ timeout: 300_000 });
-  const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
-  const got = sha(await readFile(await dl.path()));
-  if (got !== sha(buffer)) throw new Error("received file differs");
-  await page.locator("#send-done").waitFor({ timeout: 60_000 });
-  await r.close();
-  return `${SIZE / MiB} MiB sent across an app restart, hash OK`;
+    await r.locator("#recv-save").waitFor({ timeout: 300_000 });
+    const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
+    const got = sha(await readFile(await dl.path()));
+    if (got !== sha(buffer)) throw new Error("received file differs");
+    await page.locator("#send-done").waitFor({ timeout: 60_000 });
+    return `${SIZE / MiB} MiB sent across an app restart, hash OK`;
+  } finally {
+    await r.close();
+  }
 };
 
 async function main() {
