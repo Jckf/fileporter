@@ -103,7 +103,7 @@ func run(out string) error {
 		return err
 	}
 
-	assets, rootFiles, err := collectAssets(gorootDir, eng.manifest)
+	assets, rootFiles, err := collectAssets("web", gorootDir, eng.manifest)
 	if err != nil {
 		return err
 	}
@@ -152,35 +152,45 @@ func buildEngine(out string) (engine, error) {
 	}
 	os.Remove(raw)
 
-	var gz bytes.Buffer
-	zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
-	if _, err := zw.Write(wasm); err != nil {
+	eng, gz, err := packEngine(wasm)
+	if err != nil {
 		return engine{}, err
+	}
+	if err := os.WriteFile(filepath.Join(out, eng.name), gz, 0o644); err != nil {
+		return engine{}, err
+	}
+	return eng, nil
+}
+
+// packEngine gzips the raw wasm, names it by content and makes its
+// manifest. gz is the file to write as eng.name.
+func packEngine(wasm []byte) (eng engine, gz []byte, err error) {
+	var b bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&b, gzip.BestCompression)
+	if _, err := zw.Write(wasm); err != nil {
+		return engine{}, nil, err
 	}
 	if err := zw.Close(); err != nil {
-		return engine{}, err
+		return engine{}, nil, err
 	}
-	sum := sha256.Sum256(gz.Bytes())
+	sum := sha256.Sum256(b.Bytes())
 	name := "engine." + hex.EncodeToString(sum[:6]) + ".wasm.gzip"
-	if err := os.WriteFile(filepath.Join(out, name), gz.Bytes(), 0o644); err != nil {
-		return engine{}, err
-	}
-	sri := sha512.Sum384(gz.Bytes())
+	sri := sha512.Sum384(b.Bytes())
 	manifest, _ := json.MarshalIndent(map[string]any{
 		// Relative to the manifest, which lives in v/<hash>/.
 		"url":       "../../" + name,
 		"integrity": "sha384-" + base64.StdEncoding.EncodeToString(sri[:]),
-		"size":      gz.Len(),
+		"size":      b.Len(),
 		"rawSize":   len(wasm),
 	}, "", "  ")
-	return engine{name: name, manifest: manifest, rawSize: len(wasm), gzSize: gz.Len()}, nil
+	return engine{name: name, manifest: manifest, rawSize: len(wasm), gzSize: b.Len()}, b.Bytes(), nil
 }
 
-// collectAssets reads web/ and splits it into the files served at the
+// collectAssets reads web (the web/ directory) and splits it into the files served at the
 // root and the versioned assets, which also get wasm_exec.js from the
 // toolchain that built the engine, and the engine's manifest. Both map
 // slash-separated paths to contents.
-func collectAssets(goroot string, manifest []byte) (assets, rootFiles map[string][]byte, err error) {
+func collectAssets(web, goroot string, manifest []byte) (assets, rootFiles map[string][]byte, err error) {
 	assets = map[string][]byte{"engine-manifest.json": manifest}
 	wasmExec, err := os.ReadFile(filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"))
 	if err != nil {
@@ -188,11 +198,11 @@ func collectAssets(goroot string, manifest []byte) (assets, rootFiles map[string
 	}
 	assets["wasm_exec.js"] = wasmExec
 	rootFiles = map[string][]byte{}
-	err = filepath.WalkDir("web", func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(web, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		rel, _ := filepath.Rel("web", path)
+		rel, _ := filepath.Rel(web, path)
 		rel = filepath.ToSlash(rel)
 		b, err := os.ReadFile(path)
 		if err != nil {
