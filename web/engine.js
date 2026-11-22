@@ -36,7 +36,14 @@ worker.onmessage = ({ data: m }) => {
     case "ready": emit({ state: "ready" }); resolveReady(); break;
     case "loadError": emit({ state: "error", error: m.error }); rejectReady(new Error(m.error)); break;
     case "exited": fail(new Error(m.error)); break;
-    case "incoming": incomingHandlers.get(m.listenerId)?.(new Conn(m.connId, m.port)); break;
+    case "incoming": {
+      const c = new Conn(m.connId, m.port);
+      const handler = incomingHandlers.get(m.listenerId);
+      // One that arrived as its listener was closing: nobody wants it.
+      if (handler) handler(c);
+      else c.close();
+      break;
+    }
     case "result": {
       const p = pending.get(m.id);
       pending.delete(m.id);
