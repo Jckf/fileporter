@@ -32,6 +32,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"syscall/js"
 	"time"
 
@@ -41,7 +42,23 @@ import (
 	"tailscale.com/types/logger"
 )
 
+// tunnelMTU replaces the tunnel's usual 1280 bytes. In a browser the
+// tunnel only ever runs over the DERP relay's WebSocket (there's no
+// UDP), so packets are never fragmented on the way and the MTU only
+// sets how many packets a transfer takes. Each one costs about the
+// same CPU (WireGuard, the userspace TCP stack, the WebSocket, and
+// crossing into JS), so 1280 made a relayed transfer use more than a
+// core on each side. 16000 cuts that by more than half at the same
+// speed. Upper bound: the browser rejects WebSocket messages over 32 KiB
+// (github.com/coder/websocket's read limit, which derphttp leaves as
+// is), and a DERP frame adds headers; this leaves room for two frames
+// in one message. TCP's MSS is negotiated, so a peer with the old MTU
+// still works: both sides use the smaller one.
+const tunnelMTU = "16000"
+
 func main() {
+	// Read when the engine starts, which is later.
+	os.Setenv("TS_DEBUG_MTU", tunnelMTU)
 	g := js.Global()
 	g.Set("tsNewSession", js.FuncOf(tsNewSession))
 	g.Set("tsListen", js.FuncOf(tsListen))
