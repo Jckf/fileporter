@@ -467,6 +467,12 @@ $("send-start").onclick = async () => {
   const file = chosenFile();
   const mode = pickedMode("send-mode");
   if (!file || !mode) return;
+  // A Private attempt that failed has locked WebRTC out of this page for
+  // good (rtc.lockOutWebRTC), so Fast would quietly use the relay.
+  if (mode === "performance" && rtc.isLockedOut()) {
+    setText("send-error", "Private stays on for this page. To use Fast, reload fileporter first.");
+    return;
+  }
   $("send-start").disabled = true;
   $("send-start").textContent = "Creating link…";
   try {
