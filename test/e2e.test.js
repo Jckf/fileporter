@@ -441,6 +441,98 @@ tests["scan-qr"] = async (p) => {
   await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
 };
 
+// Makes `page` look like the Android app (web/platform.js), with
+// stand-in plugins. kind "send": a Files plugin whose pick() returns
+// `file` (described by arg), read in ranges from /native-file. kind
+// "save": a SaveFile plugin that keeps what it's given in
+// window.__save, failing one write first. (Defined in the init script
+// itself: the page's CSP rules out building them from a string.)
+async function asApp(page, kind, arg = {}) {
+  await page.addInitScript(({ kind, arg }) => {
+    const ok = async () => ({});
+    const Plugins = { App: { getLaunchUrl: ok, addListener: ok } };
+    if (kind === "send") {
+      const picked = { uri: "content://test/1", url: `${location.origin}/native-file?id=1`, ranges: "query", persistent: true, ...arg };
+      Plugins.Files = { pick: async () => ({ file: picked }), open: async () => ({ file: picked }), retain: ok, takeShared: ok, addListener: ok };
+    } else {
+      const save = window.__save = { failNext: true, chunks: [], aborted: 0 };
+      Plugins.Files = { retain: ok, takeShared: ok, addListener: ok };
+      Plugins.SaveFile = {
+        start: async () => { save.chunks = []; return { id: "s1" }; },
+        write: async ({ data }) => {
+          if (save.failNext && save.chunks.length === 1) { save.failNext = false; throw new Error("Simulated full disk."); }
+          save.chunks.push(data);
+        },
+        finish: async () => ({ saved: true }),
+        abort: async () => { save.aborted++; },
+      };
+    }
+    window.Capacitor = {
+      isNativePlatform: () => true, getPlatform: () => "android",
+      isPluginAvailable: (name) => name in Plugins, Plugins,
+    };
+  }, { kind, arg });
+}
+
+// Sending a file the app picked through its Files plugin, which the
+// page reads in byte ranges from a URL the plugin serves (here, a
+// route doing what FilesPlugin.java does with ?start=&end=).
+tests["app-send"] = async (p) => {
+  const { file, hash } = mkFile(3 * MiB + 12345); // not a multiple of the chunk size
+  const ranges = [];
+  await p.sctx.route("**/native-file?*", (route) => {
+    const u = new URL(route.request().url());
+    const start = Number(u.searchParams.get("start")), end = Number(u.searchParams.get("end"));
+    ranges.push([start, end]);
+    if (!(start >= 0 && end >= start && end < file.buffer.length)) return route.fulfill({ status: 416 });
+    return route.fulfill({ status: 200, body: file.buffer.subarray(start, end + 1), contentType: "application/octet-stream" });
+  });
+  await asApp(p.sender, "send", { name: file.name, size: file.buffer.length, type: file.mimeType, lastModified: Date.now() });
+  const s = p.sender;
+  await s.goto(BASE);
+  await s.locator("#send-new").waitFor();
+  await s.click('label[for="send-file"]');
+  await s.locator("#send-file-card:visible").waitFor();
+  await s.check('input[name="send-mode"][value="privacy"]');
+  await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+  await s.click("#send-start");
+  // In the app the link is fileporter.app's; the receiver here is local.
+  const link = BASE + new URL(await linkOf(s)).hash;
+  await p.openReceiver(link, "privacy");
+  if (sha(await p.download()) !== hash) throw new Error("downloaded file hash mismatch");
+  if (ranges.some(([a, b]) => b < a || b >= file.buffer.length)) throw new Error(`asked for a range outside the file: ${JSON.stringify(ranges)}`);
+  return `${ranges.length} ranges read`;
+};
+
+// Saving in the app through its SaveFile plugin: base64 chunks over the
+// bridge. The first save fails partway and must be aborted and
+// reported; the second must deliver every byte.
+tests["app-save"] = async (p) => {
+  const { file, hash } = mkFile(5 * MiB + 777); // not a multiple of the bridge chunk
+  const link = await p.startSender(file, "privacy");
+  await asApp(p.receiver, "save");
+  const r = p.receiver;
+  await r.goto(link);
+  await r.locator("#recv-save").waitFor({ timeout: 300_000 });
+  await r.click("#recv-save-btn");
+  await r.locator("#recv-save-status", { hasText: "Couldn't save the file: Simulated full disk. Try again." }).waitFor({ timeout: 30_000 });
+  if ((await r.evaluate(() => window.__save.aborted)) !== 1) throw new Error("failed save not aborted");
+  await r.locator("#recv-save-btn:enabled").waitFor();
+  await r.click("#recv-save-btn");
+  await r.locator("#recv-cleared").waitFor({ timeout: 60_000 });
+  const got = await r.evaluate(async () => {
+    const parts = window.__save.chunks.map((b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+    const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+    let off = 0;
+    for (const c of parts) { all.set(c, off); off += c.length; }
+    const d = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
+    return { hash: Array.from(d, (b) => b.toString(16).padStart(2, "0")).join(""), chunks: parts.length };
+  });
+  if (got.hash !== hash) throw new Error("saved file hash mismatch");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+  return `${got.chunks} chunks`;
+};
+
 tests["download-fallback"] = async (p) => {
   // Without a service worker (the download can't be followed), saving
   // falls back to a plain download, and the user removes the copy.
