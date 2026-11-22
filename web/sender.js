@@ -29,6 +29,8 @@ let delivered = false;
 // checks it after each wait, so a listener that comes up afterwards is
 // closed instead of shared.
 let sendCancelled = false;
+// Takes the file picked on the resume screen (set by senderResume).
+let resumeWith = null;
 
 byeOnLeave(() => currentCtl);
 
@@ -72,6 +74,12 @@ function showPickedFile() {
 }
 
 // The sender's own TURN server (turn.js), offered with Fast.
+const TURN_SAVED = "Saved. It's used when a direct connection isn't possible.";
+const turnStatus = (text, error = false) => {
+  const st = $("turn-status");
+  st.classList.toggle("error", error);
+  st.textContent = text;
+};
 function showTurnSettings() {
   const [saved] = turn.load();
   $("turn-urls").value = saved ? saved.urls.join(" ") : "";
@@ -94,7 +102,6 @@ function nativePicker(input, onFile, errorId) {
     }
   });
 }
-let resumeWith = null; // set by senderResume
 
 /**
  * Sets up the start page (choosing a file and how to connect, TURN
@@ -119,25 +126,21 @@ export function initSendPage(file) {
   // (A reload can restore the choice.)
   $("turn-settings").hidden = pickedMode("send-mode") !== "performance";
 
-  if (showTurnSettings()) setText("turn-status", "Saved. It's used when a direct connection isn't possible.");
+  if (showTurnSettings()) turnStatus(TURN_SAVED);
   $("turn-save").onclick = () => {
-    const st = $("turn-status");
     try {
       const servers = turn.parse($("turn-urls").value, $("turn-username").value, $("turn-credential").value);
       if (!turn.save(servers)) throw new Error("This browser won't let fileporter save it.");
       showTurnSettings();
-      st.className = "small";
-      st.textContent = servers.length ? "Saved. It's used when a direct connection isn't possible." : "Removed.";
+      turnStatus(servers.length ? TURN_SAVED : "Removed.");
     } catch (err) {
-      st.className = "small error";
-      st.textContent = err.message;
+      turnStatus(err.message, true);
     }
   };
   $("turn-clear").onclick = () => {
     turn.save([]);
     showTurnSettings();
-    $("turn-status").className = "small";
-    setText("turn-status", "Removed.");
+    turnStatus("Removed.");
   };
 
   if (nativefile.picks()) nativePicker($("send-file"), setNativeFile, "drop-error");
