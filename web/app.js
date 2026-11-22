@@ -56,19 +56,26 @@ function mayLeave(instead) {
   return true;
 }
 if (platform.isApp) {
-  platform.onLinkOpened((hash) => {
-    // This page's own transfer (its link tapped again): nothing to do.
-    // Asking would be wrong, and "leaving" for it would only switch off
-    // the guard, or reload the transfer that's under way.
+  // This page's own transfer (its link tapped or shared to the app
+  // again): nothing to do. Asking would be wrong, and "leaving" for it
+  // would only switch off the guard, or reload the transfer under way.
+  const ownTransfer = (hash) => {
     const current = frag.decode()?.state.id;
-    if (current && frag.decode(hash)?.state.id === current) return;
+    return !!current && frag.decode(hash)?.state.id === current;
+  };
+  platform.onLinkOpened((hash) => {
+    if (ownTransfer(hash)) return;
     if (!mayLeave("open the new link instead")) return;
     setGuard(false);
     location.hash = hash; // hashchange reloads
   });
-  nativefile.onShared(() => {
-    if (!mayLeave("send the shared file instead")) {
-      nativefile.takeShared(); // declined: don't pick it up later
+  nativefile.onShared((event) => {
+    const leave = event?.kind === "link" ? !ownTransfer(event.link) && mayLeave("open the new link instead")
+      // Not something to send: not worth leaving a transfer to say so.
+      : event?.kind === "error" ? !isGuarding() && $("recv-save").hidden
+        : mayLeave("send the shared file instead");
+    if (!leave) {
+      nativefile.takeShared(); // declined or not worth it: don't pick it up later
       return;
     }
     setGuard(false);

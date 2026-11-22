@@ -206,6 +206,9 @@ public class FilesPlugin extends Plugin {
 
         getBridge().execute(() -> {
             JSObject s = new JSObject();
+            // What the "shared" event says arrived, before it's taken: the
+            // page asks differently (or not at all) for a link or an error.
+            JSObject event = new JSObject();
             if (uris.size() > 1) {
                 s.put("error", "many");
             } else if (uris.size() == 1) {
@@ -220,11 +223,16 @@ public class FilesPlugin extends Plugin {
             } else {
                 // Shared text: a fileporter link opens; anything else isn't a file.
                 Matcher m = LINK.matcher(text != null ? text : "");
-                if (m.find()) s.put("link", m.group(1));
-                else s.put("error", "notfile");
+                if (m.find()) {
+                    s.put("link", m.group(1));
+                    event.put("link", m.group(1));
+                } else {
+                    s.put("error", "notfile");
+                }
             }
+            event.put("kind", s.has("link") ? "link" : s.has("file") ? "file" : "error");
             shared = s;
-            if (notify) notifyListeners("shared", new JSObject());
+            if (notify) notifyListeners("shared", event);
         });
     }
 

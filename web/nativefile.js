@@ -90,5 +90,9 @@ export async function takeShared() {
   return null;
 }
 
-/** Calls fn() when something is shared to the app while it runs. */
+/**
+ * Calls fn(event) when something is shared to the app while it runs.
+ * event.kind says what, before it's taken: "file", "link" (event.link,
+ * a fileporter fragment) or "error" (not something fileporter can send).
+ */
 export const onShared = (fn) => files()?.addListener("shared", fn);

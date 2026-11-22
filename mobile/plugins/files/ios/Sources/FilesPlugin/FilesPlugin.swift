@@ -92,12 +92,16 @@ public class FilesPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let info = note.object as? [String: Any], let url = info["url"] as? URL, url.isFileURL else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // What the "shared" event says arrived (as on Android; iOS
+            // only gets files here).
+            var kind = "file"
             do {
                 self.shared = ["file": try self.keep(url)]
             } catch {
                 self.shared = ["error": "unreadable"]
+                kind = "error"
             }
-            self.notifyListeners("shared", data: [:])
+            self.notifyListeners("shared", data: ["kind": kind])
         }
     }
 
