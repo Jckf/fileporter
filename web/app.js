@@ -119,11 +119,24 @@ async function startSweeping(keep) {
   setInterval(run, 5 * 60 * 1000);
 }
 
+function showCancelled(text) {
+  setText("cancelled-text", text);
+  show("cancelled");
+}
+
 // --- Sender: picking a file ----------------------------------------------------
 
 let listener = null;
 let currentCtl = null;
 let delivered = false;
+
+/** The send is over (delivered, cancelled or abandoned): stop listening, guarding and remembering it. */
+function endSend() {
+  setGuard(false);
+  listener?.close();
+  frag.scrub();
+  nativefile.retain(null);
+}
 
 // In the app, a file picked through (or shared to) its Files plugin
 // stands in for the input's.
@@ -338,10 +351,7 @@ async function startSender(state, file) {
         });
         delivered = true;
         stall.stop();
-        setGuard(false);
-        listener.close();
-        frag.scrub();
-        nativefile.retain(null);
+        endSend();
         setText("send-done-file", `${file.name} (${fmtBytes(file.size)})`);
         show("send-done");
         ui.setStep("send-done", 3);
@@ -350,12 +360,8 @@ async function startSender(state, file) {
         stall.stop();
         $("send-transfer").dataset.phase = "waiting";
         if (err instanceof CancelledError) {
-          setGuard(false);
-          listener.close();
-          frag.scrub();
-          nativefile.retain(null);
-          setText("cancelled-text", err.message);
-          show("cancelled");
+          endSend();
+          showCancelled(err.message);
         } else if (err instanceof FatalError) {
           setText("send-active-status", err.message);
         } else {
@@ -459,21 +465,15 @@ $("send-start").onclick = async () => {
 $("send-cancel").onclick = async () => {
   $("send-cancel").disabled = true;
   await currentCtl?.cancel?.();
-  listener?.close();
-  setGuard(false);
-  frag.scrub();
-  nativefile.retain(null);
-  setText("cancelled-text", "You cancelled the transfer.");
-  show("cancelled");
+  endSend();
+  showCancelled("You cancelled the transfer.");
 };
 
 // Nothing is connected yet here, so the recipient can't be told.
 $("send-resume-cancel").onclick = () => {
   resumeWith = null;
-  frag.scrub();
-  nativefile.retain(null);
-  setText("cancelled-text", "You cancelled the transfer. If the recipient is still waiting, let them know it won't continue.");
-  show("cancelled");
+  endSend();
+  showCancelled("You cancelled the transfer. If the recipient is still waiting, let them know it won't continue.");
 };
 
 async function senderResume(state) {
@@ -512,6 +512,15 @@ async function senderResume(state) {
 
 let recvCtl = null;
 let recvStopped = false;
+
+/** The receive was cancelled (by either side): delete what arrived and forget the transfer. */
+async function discardReceived(state, text) {
+  await storage.remove(state.id).catch(() => {});
+  await savetarget.discard(state.id);
+  setGuard(false);
+  frag.scrub();
+  showCancelled(text);
+}
 
 // A fresh dial per attempt: each one sets up a new tunnel client, a
 // clean slate if the sender's side changed (reloaded page).
@@ -597,6 +606,12 @@ async function askPersist(hello) {
 
 async function receiverLoop(state) {
   if (state.rm === "privacy" || state.sm === "privacy") rtc.lockOutWebRTC();
+  $("recv-cancel").onclick = async () => {
+    $("recv-cancel").disabled = true;
+    recvStopped = true;
+    await recvCtl?.cancel?.();
+    await discardReceived(state, "You cancelled the transfer, and the partly received file was deleted.");
+  };
   show("recv-active");
   ui.setStep("recv-active", 1);
   setGuard(true);
@@ -694,12 +709,7 @@ async function receiverLoop(state) {
         continue;
       }
       if (err instanceof CancelledError) {
-        await storage.remove(state.id).catch(() => {});
-        await savetarget.discard(state.id);
-        setGuard(false);
-        frag.scrub();
-        setText("cancelled-text", err.message);
-        show("cancelled");
+        await discardReceived(state, err.message);
         return;
       }
       if (err instanceof FatalError) {
@@ -730,18 +740,6 @@ function receiverFailed(err) {
 $("recv-retry").onclick = () => location.reload();
 $("busy-retry").onclick = () => location.reload();
 
-$("recv-cancel").onclick = async () => {
-  $("recv-cancel").disabled = true;
-  recvStopped = true;
-  await recvCtl?.cancel?.();
-  const f = frag.decode();
-  if (f) await storage.remove(f.state.id).catch(() => {});
-  if (f) await savetarget.discard(f.state.id);
-  setGuard(false);
-  frag.scrub();
-  setText("cancelled-text", "You cancelled the transfer, and the partly received file was deleted.");
-  show("cancelled");
-};
 
 let downloadURL = null;
 
