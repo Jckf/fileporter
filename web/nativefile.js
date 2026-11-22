@@ -24,7 +24,7 @@ export const available = () => !!files();
  */
 export const picks = () => available() && os === "android";
 
-export class NativeFile {
+class NativeFile {
   constructor({ uri, url, name, size, type, lastModified, persistent, ranges }) {
     Object.assign(this, { uri, url, name, size, type, lastModified, persistent });
     // How to ask for a range: a Range header (iOS: Capacitor serves the

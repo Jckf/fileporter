@@ -154,7 +154,7 @@ export function byeOnLeave(getCtl) {
 }
 
 /** peerRole: what the other side is called on this page ("the sender", "the recipient"). */
-export function describeEffective(effective, mine, peer, peerRole) {
+function describeEffective(effective, mine, peer, peerRole) {
   if (effective === "performance") return "Fast: you both chose a direct connection.";
   const who = mine === "privacy" && peer === "privacy" ? "you both" : mine === "privacy" ? "you" : peerRole;
   return `Private, because ${who} chose it: neither of you can see the other's IP address.`;
@@ -208,7 +208,7 @@ export function copyButton(btn, text, onFail) {
 const VERSION = new URL(import.meta.url).pathname.split("/").at(-2) || "dev";
 
 // "fra" or, where this page measured it (relay.js), "fra 31ms".
-export function relayName(code) {
+function relayName(code) {
   if (!code) return "";
   const p = relay.picked;
   return p && p.code === code ? `${code} ${Math.round(p.ms)}ms` : code;

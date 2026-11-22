@@ -23,7 +23,7 @@ export const plugin = (name) => (isApp && cap.isPluginAvailable?.(name) ? cap.Pl
  * the page's own URL is a local one (capacitor://… on iOS) that means
  * nothing on another device.
  */
-export const PUBLIC_URL = "https://fileporter.app/";
+const PUBLIC_URL = "https://fileporter.app/";
 export const publicBase = () => (/^https?:$/.test(location.protocol) && !isApp ? location.href : PUBLIC_URL);
 
 /**

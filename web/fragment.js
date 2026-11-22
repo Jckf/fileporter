@@ -34,7 +34,7 @@
 
 import { isApp, publicBase } from "./platform.js";
 
-export const MODES = ["privacy", "performance"];
+const MODES = ["privacy", "performance"];
 const VERSION = 1;
 const ID_LEN = 12;
 const KEY_LEN = 32;

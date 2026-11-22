@@ -45,7 +45,7 @@ export function fileExt(name) {
   return m ? m[1].toLowerCase() : "";
 }
 
-export function icon(id, cls = "icon") {
+function icon(id, cls = "icon") {
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
