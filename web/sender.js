@@ -16,7 +16,7 @@ import * as turn from "./turn.js";
 import * as ui from "./ui.js";
 import { senderSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
 import {
-  $, show, setText, setGuard, engineReady, engineFailedText, whenReady, whenFailed, errText, pickedMode, modeName,
+  $, show, setText, setGuard, engineReady, engineError, engineFailedText, whenReady, whenFailed, errText, pickedMode, modeName,
   showCancelled, copyButton, stallWatch, sessionStatus, byeOnLeave,
 } from "./shell.js";
 
@@ -282,6 +282,10 @@ async function startSender(state, file) {
           showCancelled(err.message);
         } else if (err instanceof FatalError) {
           setText("send-active-status", err.message);
+        } else if (engineError) {
+          // The engine failed (whenFailed below said so first): no
+          // recipient can reconnect, so keep saying that.
+          setText("send-active-status", engineFailedText());
         } else {
           setText("send-active-status", "Connection lost. Waiting for the recipient to reconnect…");
         }
