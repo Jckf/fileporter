@@ -57,9 +57,11 @@ const MAX_AHEAD = WINDOW_PER_LANE * LANES * 2;
 // (the "transport" message, sent once the sender's own attempt ended)
 // arrives.
 const RECEIVER_ICE_GRACE_MS = 5000;
-// When sending fails, how long to let the reader catch up first: a peer
-// that cancels and then closes makes our writes fail, possibly before
-// the reader got to the cancel, and that reason should win.
+// When sending fails, how long to let the reader catch up first: a
+// receiver that runs out of space says so and then closes, which makes
+// our writes fail, possibly before the reader got to its "nospace", and
+// that reason should win. (A cancel is caught on arrival, see
+// sessionControl.)
 const READER_GRACE_MS = 100;
 
 export const chunkCount = (size) => Math.ceil(size / CHUNK);
@@ -114,9 +116,20 @@ export class ChunkHashes {
  * signal for peer connections still being set up, and teardown() for
  * the session's finally. current() is the transport in use: the link
  * until a direct connection takes over.
+ *
+ * It also watches for the peer cancelling, at any point: not only while
+ * chunks flow but while connecting or verifying too. That stops the
+ * session at once, and cancelledOr(err) turns the error that stopping
+ * causes into CancelledError(cancelledText). watch(transport) adds a
+ * direct connection once it takes over (the peer cancels on whichever
+ * it's using).
  */
-function sessionControl(ctl, link, current) {
+function sessionControl(ctl, link, current, cancelledText) {
   const connecting = new AbortController();
+  let peerCancelled = false;
+  // Registered before any other wait, so it's the one that gets "cancel".
+  const watch = (q) => q.next("cancel").then(() => { peerCancelled = true; stop(); }, () => {});
+  const cancelledOr = (err) => (peerCancelled ? new CancelledError(cancelledText) : err);
   // Graceful end: the last message we sent must reach the peer before
   // the tunnel goes away.
   const end = async () => {
@@ -127,7 +140,8 @@ function sessionControl(ctl, link, current) {
   // ctl lets the page stop this session, or cancel it (telling the peer).
   // (Also gives up on peer connections still being set up: a session
   // stopped while connecting would otherwise linger until ICE times out.)
-  ctl.stop = () => { connecting.abort(); current().shutdown(); link.shutdown(); };
+  const stop = () => { connecting.abort(); current().shutdown(); link.shutdown(); };
+  ctl.stop = stop;
   // Best effort, from pagehide: tell the peer we're leaving.
   ctl.bye = () => {
     const transport = current();
@@ -145,7 +159,8 @@ function sessionControl(ctl, link, current) {
     if (transport !== link) transport.shutdown();
     link.shutdown();
   };
-  return { end, connecting: connecting.signal, teardown };
+  watch(link);
+  return { end, connecting: connecting.signal, teardown, watch, cancelledOr };
 }
 
 /** Opens extra lane l; once it's up, the transport spreads chunks onto it. */
@@ -164,7 +179,7 @@ function openLane(transport, options, l) {
 export async function senderSession(conn, { state, file, hashes, iceServers, turnServers = [], iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
-  const { connecting, teardown } = sessionControl(ctl, link, () => transport);
+  const { connecting, teardown, watch, cancelledOr } = sessionControl(ctl, link, () => transport, "The recipient cancelled the transfer.");
   const n = chunkCount(file.size);
   try {
     await link.send({
@@ -196,6 +211,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
       try {
         const { pc, dc } = await rtc.connect(rtcOptions(0));
         transport = new RtcTransport(pc, dc, chunkLenFor(file.size));
+        watch(transport);
         relayed = ownTurn.length > 0 && (await rtc.usesRelay(pc));
       } catch (err) {
         console.info("direct connection failed, using relay:", err.message);
@@ -229,8 +245,6 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
             onProgress(Math.min(file.size, acked * CHUNK));
           } else if (m.t === "complete") {
             complete = m;
-          } else if (m.t === "cancel") {
-            throw new CancelledError("The recipient cancelled the transfer.");
           } else if (m.t === "nospace") {
             throw new NoSpaceError(NOSPACE_SENDER);
           }
@@ -270,6 +284,8 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     await until(() => complete);
     if (!complete.ok) throw new FatalError("The file didn't reach the recipient intact, so it was discarded. Ask them to try again.");
     return { via: transport.via };
+  } catch (err) {
+    throw cancelledOr(err);
   } finally {
     teardown();
   }
@@ -288,7 +304,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
 export async function receiverSession(conn, { state, target, canMakeRoom, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
-  const { end, connecting, teardown } = sessionControl(ctl, link, () => transport);
+  const { end, connecting, teardown, watch, cancelledOr } = sessionControl(ctl, link, () => transport, "The sender cancelled the transfer.");
   try {
     const hello = await link.next("hello");
     if (hello.v !== PROTOCOL_VERSION) throw new FatalError("The sender is using a different version of fileporter. Ask them to open fileporter again and send you a new link.");
@@ -346,6 +362,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
       const { pc, dc } = await attempt;
       const rtcTransport = new RtcTransport(pc, dc, chunkLenFor(hello.size));
       transport = rtcTransport;
+      watch(rtcTransport);
       relayed = theirTurn.length > 0 && (await rtc.usesRelay(pc));
       // More lanes, as the sender opens them (see senderSession).
       lanes.onNewLane = (l) => openLane(rtcTransport, rtcOptions(l), l);
@@ -361,7 +378,6 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     while (have < n) {
       const ev = await transport.nextEvent();
       if (ev.kind === "control") {
-        if (ev.msg.t === "cancel") throw new CancelledError("The sender cancelled the transfer.");
         continue;
       }
       if (ev.idx < have || ev.idx >= Math.min(n, have + MAX_AHEAD) || early.has(ev.idx)) {
@@ -393,7 +409,9 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     await transport.send({ t: "complete", ok, root });
     await end();
     return { hello, via };
-  } catch (err) {
+  } catch (caught) {
+    const err = cancelledOr(caught);
+    if (err instanceof CancelledError) throw err;
     // Storage full, whether caught up front or by a failing write:
     // final for this session (redialing would just fail again), but
     // what's stored is kept so freeing space and retrying resumes.
