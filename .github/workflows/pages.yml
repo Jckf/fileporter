@@ -157,7 +157,8 @@ jobs:
       # turn-lanes failing says little without the TURN server's side.
       - name: TURN server log
         if: failure() && matrix.browser != 'webkit'
-        run: docker logs turn 2>&1 | tail -200
+        # (Not started if an earlier step failed: nothing to add then.)
+        run: if docker inspect turn >/dev/null 2>&1; then docker logs turn 2>&1 | tail -200; fi
 
   deploy:
     needs: [build, test, lint]
