@@ -176,10 +176,10 @@ export function initSendPage(file) {
       frag.set("s", state);
       await startSender(state, file);
     } catch (err) {
-      if (!senderStartFailed(err, "send-error")) {
+      senderStartFailed(err, () => {
         setText("send-error", `Couldn't create the link: ${errText(err)}.`);
         updateStartButton();
-      }
+      });
     }
   };
   setNativeFile(file);
@@ -301,15 +301,14 @@ async function startSender(state, file) {
 }
 
 /**
- * Reports a failed startSender. Before it shows the transfer screen,
- * the error goes next to the control that started it (errorId); after,
- * that control is hidden, so it goes in the transfer's status line.
+ * Reports a failed start of sending. Before the transfer screen shows,
+ * the caller says so next to the control that started it (before(err));
+ * after, that control is hidden, so it goes in the transfer's status line.
  */
-function senderStartFailed(err, errorId) {
-  if ($("send-active").hidden) { setText(errorId, err.message); return false; }
+function senderStartFailed(err, before) {
+  if ($("send-active").hidden) { before(err); return; }
   setGuard(false);
   setText("send-active-status", `Couldn't start sending: ${errText(err)}. Reopen fileporter to try again.`);
-  return true;
 }
 
 // The relay nearest this device, measured once (relay.js); started when
@@ -340,7 +339,7 @@ export async function senderResume(state) {
     accepted = true;
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     engine.ready.then(
-      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")),
+      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, () => setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`))),
       () => setText("send-resume-error", engineFailedText()),
     );
     return true;
