@@ -46,7 +46,7 @@ function endSend() {
 let nativeChosen = null;
 const chosenFile = () => nativeChosen ?? $("send-file").files[0];
 /** Uses the app's file (null: the input's, as picked or dropped). */
-export function setNativeFile(file) {
+function setNativeFile(file) {
   nativeChosen = file;
   showPickedFile();
 }
@@ -71,23 +71,6 @@ function showPickedFile() {
   updateStartButton();
 }
 
-$("send-file").onchange = () => setNativeFile(null);
-$("send-file-clear").onclick = () => {
-  $("send-file").value = "";
-  nativeChosen = null;
-  showPickedFile();
-  $("send-file").focus();
-};
-for (const r of document.querySelectorAll('input[name="send-mode"]')) {
-  r.onchange = () => {
-    updateStartButton();
-    $("turn-settings").hidden = pickedMode("send-mode") !== "performance";
-  };
-}
-
-// (A reload can restore the choice.)
-$("turn-settings").hidden = pickedMode("send-mode") !== "performance";
-
 // The sender's own TURN server (turn.js), offered with Fast.
 function showTurnSettings() {
   const [saved] = turn.load();
@@ -97,27 +80,6 @@ function showTurnSettings() {
   $("turn-clear").hidden = !saved;
   return saved;
 }
-if (showTurnSettings()) setText("turn-status", "Saved. It's used when a direct connection isn't possible.");
-$("turn-save").onclick = () => {
-  const st = $("turn-status");
-  try {
-    const servers = turn.parse($("turn-urls").value, $("turn-username").value, $("turn-credential").value);
-    if (!turn.save(servers)) throw new Error("This browser won't let fileporter save it.");
-    showTurnSettings();
-    st.className = "small";
-    st.textContent = servers.length ? "Saved. It's used when a direct connection isn't possible." : "Removed.";
-  } catch (err) {
-    st.className = "small error";
-    st.textContent = err.message;
-  }
-};
-$("turn-clear").onclick = () => {
-  turn.save([]);
-  showTurnSettings();
-  $("turn-status").className = "small";
-  setText("turn-status", "Removed.");
-};
-
 // The app picks through its plugin instead of the web view's picker: it
 // keeps access to the file, so an interrupted send carries on without
 // asking for it again.
@@ -133,18 +95,95 @@ function nativePicker(input, onFile, errorId) {
   });
 }
 let resumeWith = null; // set by senderResume
-if (nativefile.picks()) {
-  nativePicker($("send-file"), setNativeFile, "drop-error");
-  nativePicker($("send-resume-file"), (file) => resumeWith?.(file), "send-resume-error");
-}
-whenReady(updateStartButton);
 
-ui.setupDrop({
-  zone: $("dropzone"),
-  active: () => !$("send-new").hidden,
-  onFile: (file) => ui.setInputFile($("send-file"), file),
-  onError: (msg) => setText("drop-error", msg),
-});
+/**
+ * Sets up the start page (choosing a file and how to connect, TURN
+ * settings, "Create link") with `file` chosen, if given (the app's
+ * shared file). Only routed to on the start page.
+ */
+export function initSendPage(file) {
+  $("send-file").onchange = () => setNativeFile(null);
+  $("send-file-clear").onclick = () => {
+    $("send-file").value = "";
+    nativeChosen = null;
+    showPickedFile();
+    $("send-file").focus();
+  };
+  for (const r of document.querySelectorAll('input[name="send-mode"]')) {
+    r.onchange = () => {
+      updateStartButton();
+      $("turn-settings").hidden = pickedMode("send-mode") !== "performance";
+    };
+  }
+
+  // (A reload can restore the choice.)
+  $("turn-settings").hidden = pickedMode("send-mode") !== "performance";
+
+  if (showTurnSettings()) setText("turn-status", "Saved. It's used when a direct connection isn't possible.");
+  $("turn-save").onclick = () => {
+    const st = $("turn-status");
+    try {
+      const servers = turn.parse($("turn-urls").value, $("turn-username").value, $("turn-credential").value);
+      if (!turn.save(servers)) throw new Error("This browser won't let fileporter save it.");
+      showTurnSettings();
+      st.className = "small";
+      st.textContent = servers.length ? "Saved. It's used when a direct connection isn't possible." : "Removed.";
+    } catch (err) {
+      st.className = "small error";
+      st.textContent = err.message;
+    }
+  };
+  $("turn-clear").onclick = () => {
+    turn.save([]);
+    showTurnSettings();
+    $("turn-status").className = "small";
+    setText("turn-status", "Removed.");
+  };
+
+  if (nativefile.picks()) nativePicker($("send-file"), setNativeFile, "drop-error");
+  whenReady(updateStartButton);
+
+  ui.setupDrop({
+    zone: $("dropzone"),
+    active: () => !$("send-new").hidden,
+    onFile: (file) => ui.setInputFile($("send-file"), file),
+    onError: (msg) => setText("drop-error", msg),
+  });
+
+  $("send-start").onclick = async () => {
+    const file = chosenFile();
+    const mode = pickedMode("send-mode");
+    if (!file || !mode) return;
+    // A Private attempt that failed has locked WebRTC out of this page for
+    // good (rtc.lockOutWebRTC), so Fast would quietly use the relay.
+    if (mode === "performance" && rtc.isLockedOut()) {
+      setText("send-error", "Private stays on for this page. To use Fast, reload fileporter first.");
+      return;
+    }
+    $("send-start").disabled = true;
+    $("send-start").textContent = "Creating link…";
+    try {
+      if (mode === "privacy") rtc.lockOutWebRTC();
+      const s = await engine.newSession({ derpMapURL: config.derpMapURL, regionID: await nearestRegion() });
+      const state = {
+        id: frag.newTransferId(),
+        sk: s.senderKey, a: s.addr, rk: s.receiverKey, rp: s.receiverPub,
+        m: mode, f: await frag.fileFingerprint(file),
+        // The app's handle on the file, to send it again after a restart.
+        ...(file.persistent ? { u: file.uri } : {}),
+      };
+      nativefile.retain(file.persistent ? file.uri : null);
+      frag.set("s", state);
+      await startSender(state, file);
+    } catch (err) {
+      if (!senderStartFailed(err, "send-error")) {
+        setText("send-error", `Couldn't create the link: ${errText(err)}.`);
+        updateStartButton();
+      }
+    }
+  };
+  setNativeFile(file);
+}
 
 // --- Sharing and sending ---------------------------------------------------
 
@@ -180,6 +219,13 @@ async function startSender(state, file) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
   if (!(await storage.lock(state.id))) { show("busy"); return; }
   setGuard(true);
+  $("send-cancel").onclick = async () => {
+    $("send-cancel").disabled = true;
+    sendCancelled = true;
+    await currentCtl?.cancel?.();
+    endSend();
+    showCancelled("You cancelled the transfer.");
+  };
   show("send-active");
   ui.setStep("send-active", 1);
   setText("send-active-effective", state.m === "performance"
@@ -272,56 +318,15 @@ function senderStartFailed(err, errorId) {
 let regionP = null;
 const nearestRegion = () => (regionP ||= relay.nearestRegion(config.derpMapURL));
 
-$("send-start").onclick = async () => {
-  const file = chosenFile();
-  const mode = pickedMode("send-mode");
-  if (!file || !mode) return;
-  // A Private attempt that failed has locked WebRTC out of this page for
-  // good (rtc.lockOutWebRTC), so Fast would quietly use the relay.
-  if (mode === "performance" && rtc.isLockedOut()) {
-    setText("send-error", "Private stays on for this page. To use Fast, reload fileporter first.");
-    return;
-  }
-  $("send-start").disabled = true;
-  $("send-start").textContent = "Creating link…";
-  try {
-    if (mode === "privacy") rtc.lockOutWebRTC();
-    const s = await engine.newSession({ derpMapURL: config.derpMapURL, regionID: await nearestRegion() });
-    const state = {
-      id: frag.newTransferId(),
-      sk: s.senderKey, a: s.addr, rk: s.receiverKey, rp: s.receiverPub,
-      m: mode, f: await frag.fileFingerprint(file),
-      // The app's handle on the file, to send it again after a restart.
-      ...(file.persistent ? { u: file.uri } : {}),
-    };
-    nativefile.retain(file.persistent ? file.uri : null);
-    frag.set("s", state);
-    await startSender(state, file);
-  } catch (err) {
-    if (!senderStartFailed(err, "send-error")) {
-      setText("send-error", `Couldn't create the link: ${errText(err)}.`);
-      updateStartButton();
-    }
-  }
-};
-
-$("send-cancel").onclick = async () => {
-  $("send-cancel").disabled = true;
-  sendCancelled = true;
-  await currentCtl?.cancel?.();
-  endSend();
-  showCancelled("You cancelled the transfer.");
-};
-
-// Nothing is connected yet here, so the recipient can't be told.
-$("send-resume-cancel").onclick = () => {
-  resumeWith = null;
-  endSend();
-  showCancelled("You cancelled the transfer. If the recipient is still waiting, let them know it won't continue.");
-};
-
 export async function senderResume(state) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
+  // Nothing is connected yet here, so the recipient can't be told.
+  $("send-resume-cancel").onclick = () => {
+    resumeWith = null;
+    endSend();
+    showCancelled("You cancelled the transfer. If the recipient is still waiting, let them know it won't continue.");
+  };
+  if (nativefile.picks()) nativePicker($("send-resume-file"), (file) => resumeWith?.(file), "send-resume-error");
   let accepted = false;
   resumeWith = async (file) => {
     // Once a file is accepted, sending starts (perhaps after the engine

@@ -15,7 +15,7 @@ import * as scan from "./scan.js";
 import * as ui from "./ui.js";
 import "./edgefade.js";
 import { $, show, setText, setGuard, isGuarding, startSweeping } from "./shell.js";
-import { setNativeFile, senderResume } from "./sender.js";
+import { initSendPage, senderResume } from "./sender.js";
 import { receiver } from "./receiver.js";
 
 ui.renderSteps();
@@ -86,7 +86,7 @@ if (!location.hash) {
       }
     };
   }
-  setNativeFile(shared?.file ?? null);
+  initSendPage(shared?.file ?? null);
   if (shared?.error) setText("drop-error", shared.error);
   startSweeping(null);
 } else if (!f) {
