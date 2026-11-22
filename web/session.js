@@ -100,6 +100,49 @@ export class ChunkHashes {
 }
 
 /**
+ * What both sides need to end a session: fills ctl with the page's
+ * handles (stop, bye, cancel) and returns end() (graceful), the abort
+ * signal for peer connections still being set up, and teardown() for
+ * the session's finally. current() is the transport in use: the link
+ * until a direct connection takes over.
+ */
+function sessionControl(ctl, link, current) {
+  const connecting = new AbortController();
+  // Graceful end: the last message we sent must reach the peer before
+  // the tunnel goes away.
+  const end = async () => {
+    const transport = current();
+    if (transport !== link) await transport.finish();
+    await link.finish();
+  };
+  // ctl lets the page stop this session, or cancel it (telling the peer).
+  ctl.stop = () => { current().shutdown(); link.shutdown(); };
+  // Best effort, from pagehide: tell the peer we're leaving.
+  ctl.bye = () => {
+    const transport = current();
+    if (transport !== link) transport.bye();
+    link.bye();
+  };
+  ctl.cancel = async () => {
+    try { await current().send({ t: "cancel" }); } catch {}
+    await end();
+  };
+  const teardown = () => {
+    ctl.stop = ctl.bye = ctl.cancel = null;
+    connecting.abort();
+    const transport = current();
+    if (transport !== link) transport.shutdown();
+    link.shutdown();
+  };
+  return { end, connecting: connecting.signal, teardown };
+}
+
+/** Opens extra lane l; once it's up, the transport spreads chunks onto it. */
+function openLane(transport, options, l) {
+  rtc.connect(options).then(({ pc, dc }) => transport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
+}
+
+/**
  * Sender side of one connection from the receiver. Resolves when the
  * receiver confirmed the complete file; rejects if the connection
  * drops (the receiver will redial) or with FatalError.
@@ -110,22 +153,7 @@ export class ChunkHashes {
 export async function senderSession(conn, { state, file, hashes, iceServers, turnServers = [], iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
-  // Gives up on peer connections still being set up when the session ends.
-  const connecting = new AbortController();
-  // ctl lets the page stop this session, or cancel it (telling the peer).
-  ctl.stop = () => { transport.shutdown(); link.shutdown(); };
-  // Best effort, from pagehide: tell the peer we're leaving.
-  ctl.bye = () => { if (transport !== link) transport.bye(); link.bye(); };
-  ctl.cancel = async () => {
-    try { await transport.send({ t: "cancel" }); } catch {}
-    await end();
-  };
-  // Graceful end: the last message we sent must reach the peer before
-  // the tunnel goes away.
-  const end = async () => {
-    if (transport !== link) await transport.finish();
-    await link.finish();
-  };
+  const { connecting, teardown } = sessionControl(ctl, link, () => transport);
   const n = chunkCount(file.size);
   try {
     await link.send({
@@ -147,14 +175,15 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
 
     let relayed = false;
     let lanes = null;
+    const rtcOptions = (l) => ({
+      localMode: state.m, effectiveMode: effective, offerer: true,
+      signal: lanes.lane(l), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
+      abort: connecting,
+    });
     if (effective === "performance") {
       lanes = rtc.signalLanes(link.signal(), LANES);
       try {
-        const { pc, dc } = await rtc.connect({
-          localMode: state.m, effectiveMode: effective, offerer: true,
-          signal: lanes.lane(0), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
-          abort: connecting.signal,
-        });
+        const { pc, dc } = await rtc.connect(rtcOptions(0));
         transport = new RtcTransport(pc, dc, chunkLenFor(file.size));
         relayed = ownTurn.length > 0 && (await rtc.usesRelay(pc));
       } catch (err) {
@@ -168,14 +197,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     // first and spreads out as the others come up.
     if (relayed) {
       const want = Math.min(LANES, Number.isInteger(resume.lanes) ? resume.lanes : 1);
-      const rtcTransport = transport;
-      for (let l = 1; l < want; l++) {
-        rtc.connect({
-          localMode: state.m, effectiveMode: effective, offerer: true,
-          signal: lanes.lane(l), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
-          abort: connecting.signal,
-        }).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
-      }
+      for (let l = 1; l < want; l++) openLane(transport, rtcOptions(l), l);
     }
 
     // Acks, completion and cancellation arrive on the transport while
@@ -240,10 +262,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     if (!complete.ok) throw new FatalError("The file didn't reach the recipient intact, so it was discarded. Ask them to try again.");
     return { via: transport.via };
   } finally {
-    ctl.stop = ctl.cancel = null;
-    connecting.abort();
-    if (transport !== link) transport.shutdown();
-    link.shutdown();
+    teardown();
   }
 }
 
@@ -260,22 +279,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
 export async function receiverSession(conn, { state, target, canMakeRoom, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
-  // Gives up on peer connections still being set up when the session ends.
-  const connecting = new AbortController();
-  // ctl lets the page stop this session, or cancel it (telling the peer).
-  ctl.stop = () => { transport.shutdown(); link.shutdown(); };
-  // Best effort, from pagehide: tell the peer we're leaving.
-  ctl.bye = () => { if (transport !== link) transport.bye(); link.bye(); };
-  ctl.cancel = async () => {
-    try { await transport.send({ t: "cancel" }); } catch {}
-    await end();
-  };
-  // Graceful end: the last message we sent must reach the peer before
-  // the tunnel goes away.
-  const end = async () => {
-    if (transport !== link) await transport.finish();
-    await link.finish();
-  };
+  const { end, connecting, teardown } = sessionControl(ctl, link, () => transport);
   try {
     const hello = await link.next("hello");
     if (hello.v !== PROTOCOL_VERSION) throw new FatalError("The sender is using a different version of fileporter. Ask them to open fileporter again and send you a new link.");
@@ -315,7 +319,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     const rtcOptions = (l) => ({
       localMode: state.rm, effectiveMode: effective, offerer: false,
       signal: lanes.lane(l), iceServers: [...iceServers, ...theirTurn], timeoutMs: iceTimeoutMs + 5000,
-      abort: connecting.signal,
+      abort: connecting,
     });
     if (effective === "performance") {
       lanes = rtc.signalLanes(link.signal(), LANES);
@@ -332,9 +336,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
       transport = rtcTransport;
       relayed = theirTurn.length > 0 && (await rtc.usesRelay(pc));
       // More lanes, as the sender opens them (see senderSession).
-      lanes.onNewLane = (l) => {
-        rtc.connect(rtcOptions(l)).then(({ pc, dc }) => rtcTransport.addLane(pc, dc), (err) => console.info(`extra lane ${l} failed:`, err.message));
-      };
+      lanes.onNewLane = (l) => openLane(rtcTransport, rtcOptions(l), l);
     } else {
       attempt?.then(({ pc }) => pc.close(), () => {});
     }
@@ -391,10 +393,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     throw err instanceof NoSpaceError ? err
       : new NoSpaceError("This device ran out of storage space. Free up some space, then try again to continue where you left off.");
   } finally {
-    ctl.stop = ctl.cancel = null;
-    connecting.abort();
-    if (transport !== link) transport.shutdown();
-    link.shutdown();
+    teardown();
   }
 }
 
