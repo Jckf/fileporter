@@ -12,6 +12,9 @@ const pending = new Map();
 const incomingHandlers = new Map(); // listenerId → (Conn) => void
 const progressHandlers = new Set();
 let nextId = 1;
+// Set once the worker or the engine in it has failed: every pending and
+// later call fails with it instead of waiting forever.
+let failed = null;
 
 let resolveReady, rejectReady;
 export const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
@@ -32,6 +35,7 @@ worker.onmessage = ({ data: m }) => {
     case "retrying": emit({ state: "retrying", error: m.error, attempt: m.attempt }); break;
     case "ready": emit({ state: "ready" }); resolveReady(); break;
     case "loadError": emit({ state: "error", error: m.error }); rejectReady(new Error(m.error)); break;
+    case "exited": fail(new Error(m.error)); break;
     case "incoming": incomingHandlers.get(m.listenerId)?.(new Conn(m.connId, m.port)); break;
     case "result": {
       const p = pending.get(m.id);
@@ -42,12 +46,19 @@ worker.onmessage = ({ data: m }) => {
     }
   }
 };
-worker.onerror = (e) => {
-  emit({ state: "error", error: e.message });
-  rejectReady(new Error(e.message));
-};
+worker.onerror = (e) => fail(new Error(`engine failed: ${e.message || "could not load"}`));
+
+function fail(err) {
+  if (failed) return;
+  failed = err;
+  emit({ state: "error", error: err.message });
+  rejectReady(err);
+  for (const p of pending.values()) p.reject(err);
+  pending.clear();
+}
 
 function rpc(msg, transfer) {
+  if (failed) return Promise.reject(failed);
   const id = nextId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });

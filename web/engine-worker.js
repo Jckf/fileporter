@@ -12,6 +12,7 @@
 //     {op:"progress", loaded, total}
 //     {op:"retrying", attempt, error}
 //     {op:"ready"} | {op:"loadError", error}
+//     {op:"exited", error}   the engine stopped after it was ready
 //     {op:"result", id, ok, value?, error?}
 //     {op:"incoming", listenerId, connId, port}
 //
@@ -78,8 +79,12 @@ async function load(manifestURL) {
   const ready = new Promise((resolve) => { self.onEngineReady = resolve; });
   const go = new Go();
   const { instance } = await WebAssembly.instantiate(bytes, go.importObject);
-  go.run(instance); // resolves only when the Go program exits; never awaited
-  await ready;
+  // go.run resolves only when the Go program exits, which it never
+  // should: before it's ready that's a failed load, after it every
+  // later call would go unanswered, so the page is told.
+  const exited = go.run(instance).then(() => { throw new Error("the engine stopped unexpectedly"); });
+  await Promise.race([ready, exited]);
+  exited.catch((err) => post({ op: "exited", error: String(err.message || err) }));
 }
 
 // --- Calls ---------------------------------------------------------------
