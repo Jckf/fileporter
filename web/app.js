@@ -57,6 +57,11 @@ function mayLeave(instead) {
 }
 if (platform.isApp) {
   platform.onLinkOpened((hash) => {
+    // This page's own transfer (its link tapped again): nothing to do.
+    // Asking would be wrong, and "leaving" for it would only switch off
+    // the guard, or reload the transfer that's under way.
+    const current = frag.decode()?.state.id;
+    if (current && frag.decode(hash)?.state.id === current) return;
     if (!mayLeave("open the new link instead")) return;
     setGuard(false);
     location.hash = hash; // hashchange reloads
