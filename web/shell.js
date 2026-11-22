@@ -216,7 +216,8 @@ export function relayName(code) {
 export function stallWatch(side, total, onRetry) {
   const note = $(`${side}-stall`);
   let bytes = 0, since = 0, via = "", region = "", timer = null;
-  const hide = () => { note.hidden = true; };
+  // (Only when showing: progress() calls it for every acknowledged chunk.)
+  const hide = () => { if (!note.hidden) note.hidden = true; };
   $(`${side}-stall-retry`).onclick = () => { hide(); since = Date.now(); onRetry(); };
   const check = () => {
     const s = Math.round((Date.now() - since) / 1000);
