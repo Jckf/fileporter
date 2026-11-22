@@ -17,7 +17,7 @@ import * as ui from "./ui.js";
 import { senderSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
 import {
   $, show, setText, setGuard, engineReady, engineFailedText, whenReady, whenFailed, errText, pickedMode, modeName,
-  describeEffective, showCancelled, copyButton, relayName, stallWatch,
+  showCancelled, copyButton, stallWatch, sessionStatus, byeOnLeave,
 } from "./shell.js";
 
 // --- Picking a file ----------------------------------------------------
@@ -30,10 +30,7 @@ let delivered = false;
 // closed instead of shared.
 let sendCancelled = false;
 
-// Leaving (or reloading): tell the peer, so it can reconnect right away
-// instead of waiting for the keepalive timeout. Best effort, see bye()
-// in transport.js. (Not from beforeunload: the user may still cancel.)
-addEventListener("pagehide", () => currentCtl?.bye?.());
+byeOnLeave(() => currentCtl);
 
 
 /** The send is over (delivered, cancelled or abandoned): stop listening, guarding and remembering it. */
@@ -219,22 +216,10 @@ async function startSender(state, file) {
           state, file, hashes, iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
         turnServers: state.m === "performance" ? turn.load() : [],
           onProgress: progress,
-          onStatus: (s) => {
-            if (s.phase === "negotiated") {
-              setText("send-active-effective", describeEffective(s.effective, state.m, s.peerMode, "the recipient"));
-              setText("send-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
-            }
-            if (s.phase === "transport") {
-              $("send-transfer").dataset.phase = "active";
-              ui.setBadge($("send-badge"), s.via, s.turn ? "your" : null);
-              setText("send-active-status", "Sending");
-              stall.start(s.turn ? "turn" : s.via, relayName(listener.region));
-            }
-            if (s.phase === "verifying") {
-              stall.stop();
-              setText("send-active-status", "Verifying…");
-            }
-          },
+          onStatus: sessionStatus("send", {
+            mine: state.m, peerRole: "the recipient", turnOwner: "your", active: "Sending",
+            stall: () => stall, region: () => listener.region,
+          }),
         });
         delivered = true;
         stall.stop();

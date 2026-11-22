@@ -11,6 +11,7 @@ import * as platform from "./platform.js";
 import * as relay from "./relay.js";
 import * as savetarget from "./savetarget.js";
 import * as storage from "./storage.js";
+import * as ui from "./ui.js";
 import * as notify from "./notify.js";
 import { keepAwake } from "./wakelock.js";
 
@@ -115,6 +116,42 @@ export const engineFailedText = () => (engineReady ? ENGINE_STOPPED : ENGINE_FAI
 export const errText = (err) => String(err?.message || err).replace(/[.\s]+$/, "");
 export const pickedMode = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? null;
 export const modeName = (m) => (m === "privacy" ? "Private" : "Fast");
+
+/**
+ * A session's onStatus for the steps both sides show the same way
+ * (negotiated, transport, verifying), on side "send" or "recv". opts:
+ * mine (this side's mode), peerRole ("the recipient"), turnOwner (whose
+ * TURN server, for the badge: "your"), active ("Sending"), stall() and
+ * region() (the stall watch, possibly not there yet, and the relay's
+ * code, both looked up when needed).
+ */
+export function sessionStatus(side, { mine, peerRole, turnOwner, active, stall, region }) {
+  const status = `${side}-active-status`;
+  return (s) => {
+    if (s.phase === "negotiated") {
+      setText(`${side}-active-effective`, describeEffective(s.effective, mine, s.peerMode, peerRole));
+      setText(status, s.fromChunk ? "Resuming…" : "Connecting…");
+    } else if (s.phase === "transport") {
+      $(`${side}-transfer`).dataset.phase = "active";
+      ui.setBadge($(`${side}-badge`), s.via, s.turn ? turnOwner : null);
+      setText(status, active);
+      stall()?.start(s.turn ? "turn" : s.via, relayName(region()));
+    } else if (s.phase === "verifying") {
+      stall()?.stop();
+      setText(status, "Verifying…");
+    }
+  };
+}
+
+/**
+ * On leaving (or reloading), tells the peer of the session getCtl()
+ * returns, so it can reconnect right away instead of waiting for the
+ * keepalive timeout. Best effort, see bye() in transport.js. (Not from
+ * beforeunload: the user may still cancel.)
+ */
+export function byeOnLeave(getCtl) {
+  addEventListener("pagehide", () => getCtl()?.bye?.());
+}
 
 /** peerRole: what the other side is called on this page ("the sender", "the recipient"). */
 export function describeEffective(effective, mine, peer, peerRole) {

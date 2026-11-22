@@ -17,7 +17,7 @@ import * as ui from "./ui.js";
 import { receiverSession, FatalError, CancelledError, NeedsRoomError, fmtBytes } from "./session.js";
 import {
   $, show, announce, setText, sleep, setGuard, engineReady, engineError, engineFailedText, errText, pickedMode,
-  describeEffective, startSweeping, showCancelled, copyButton, relayName, stallWatch,
+  startSweeping, showCancelled, copyButton, stallWatch, sessionStatus, byeOnLeave,
 } from "./shell.js";
 
 // --- Receiving ----------------------------------------------------------------
@@ -25,10 +25,7 @@ import {
 let recvCtl = null;
 let recvStopped = false;
 
-// Leaving (or reloading): tell the peer, so it can reconnect right away
-// instead of waiting for the keepalive timeout. Best effort, see bye()
-// in transport.js. (Not from beforeunload: the user may still cancel.)
-addEventListener("pagehide", () => recvCtl?.bye?.());
+byeOnLeave(() => recvCtl);
 
 
 /** The receive was cancelled (by either side): delete what arrived and forget the transfer. */
@@ -178,6 +175,10 @@ async function receiverLoop(state) {
     if (recvStopped) { conn.close(); return; }
     const ctl = {};
     recvCtl = ctl;
+    const shared = sessionStatus("recv", {
+      mine: state.rm, peerRole: "the sender", turnOwner: "the sender's", active: "Receiving",
+      stall: () => stall, region: () => conn.region,
+    });
     try {
       const res = await receiverSession(conn, {
         state, target, canMakeRoom: savetarget.available() || (await canAskPersist()), iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
@@ -193,20 +194,7 @@ async function receiverLoop(state) {
             // Reconnecting drops this session, and the loop redials at once.
             stall ||= stallWatch("recv", s.hello.size, () => recvCtl?.stop?.());
           }
-          if (s.phase === "negotiated") {
-            setText("recv-active-effective", describeEffective(s.effective, state.rm, s.peerMode, "the sender"));
-            setText("recv-active-status", s.fromChunk ? "Resuming…" : "Connecting…");
-          }
-          if (s.phase === "transport") {
-            $("recv-transfer").dataset.phase = "active";
-            ui.setBadge($("recv-badge"), s.via, s.turn ? "the sender's" : null);
-            setText("recv-active-status", "Receiving");
-            stall?.start(s.turn ? "turn" : s.via, relayName(conn.region));
-          }
-          if (s.phase === "verifying") {
-            stall?.stop();
-            setText("recv-active-status", "Verifying…");
-          }
+          shared(s);
         },
       });
       recvCtl = null;
