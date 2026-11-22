@@ -45,13 +45,26 @@ public class FilesPlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: Files kept for sending
 
     @objc func open(_ call: CAPPluginCall) {
-        let url = store.appendingPathComponent(call.getString("uri") ?? "")
-        guard !(call.getString("uri") ?? "").isEmpty, FileManager.default.fileExists(atPath: url.path),
+        guard let url = stored(call.getString("uri") ?? ""), FileManager.default.fileExists(atPath: url.path),
               let file = try? describe(url) else {
             call.reject("No longer available")
             return
         }
         call.resolve(["file": file])
+    }
+
+    /// The file uri names in the store, if it has the shape describe gives
+    /// it (<id>/<name>). It comes from the page's link fragment, so
+    /// something like "../.." mustn't name any other file in the sandbox.
+    private func stored(_ uri: String) -> URL? {
+        let parts = uri.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2, UUID(uuidString: parts[0]) != nil,
+              !parts[1].isEmpty, parts[1] != ".", parts[1] != ".." else { return nil }
+        let root = store.standardizedFileURL
+        let url = root.appendingPathComponent(parts[0], isDirectory: true)
+            .appendingPathComponent(parts[1]).standardizedFileURL
+        guard url.deletingLastPathComponent().deletingLastPathComponent().path == root.path else { return nil }
+        return url
     }
 
     @objc func retain(_ call: CAPPluginCall) {
