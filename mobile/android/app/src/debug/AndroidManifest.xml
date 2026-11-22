@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only, for test/android.test.js: files served
+             through a pipe, as some providers serve theirs. Not exported:
+             only the app itself reads it (a share from adb to the app
+             needs no grant). -->
+        <provider
+            android:name=".PipeProvider"
+            android:authorities="${applicationId}.pipe"
+            android:exported="false" />
+    </application>
+</manifest>

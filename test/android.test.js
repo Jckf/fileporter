@@ -14,6 +14,9 @@
 //   send-resume   the app sends a file picked with the system picker;
 //                 it's force-stopped halfway and reopened, and carries
 //                 on by itself (no picking the file again)
+//   send-pipe     the app sends a file shared from a provider that can
+//                 only stream it (the debug build's PipeProvider); the
+//                 receiver reloads halfway, so the sender goes back
 //
 // Needs Docker, /dev/kvm and internet (tailcat's public DERP relays).
 // Build the APK first (mobile/run mobile/build android), then:
@@ -243,6 +246,54 @@ tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) =>
   } finally {
     await r.close();
   }
+};
+
+// A file the provider can only stream through a pipe, so the plugin
+// can't read it at an offset: it keeps the stream a range leaves off for
+// the next one, and opens it again when the receiver reloads and the
+// sender goes back to where the receiver had got to.
+tests["send-pipe"] = async ({ desktop, device, shell, appPage }) => {
+  const buffer = randomBytes(SIZE);
+  const name = `pipe-${Date.now()}.bin`;
+  // Into the app's files/pipe/, which PipeProvider serves.
+  await device.push(buffer, `/data/local/tmp/${name}`);
+  await shell(`run-as app.fileporter sh -c 'mkdir -p files/pipe && rm -f files/pipe/* && cp /data/local/tmp/${name} files/pipe/' && rm /data/local/tmp/${name}`);
+  await shell("logcat -c");
+  const uri = `content://app.fileporter.pipe/${name}`;
+  await shell(`am start -W -a android.intent.action.SEND -t application/octet-stream --eu android.intent.extra.STREAM ${uri} -n app.fileporter/.MainActivity`);
+  const page = await appPage();
+  await page.locator("#send-file-card:visible").waitFor({ timeout: 30_000 });
+  const shown = await page.textContent("#send-file-card .file-name");
+  if (shown !== name) throw new Error(`file card shows ${shown}`);
+  await page.check('input[name="send-mode"][value="privacy"]');
+  await page.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+  await page.click("#send-start");
+  const link = await linkOf(page);
+
+  step("receiving on the desktop");
+  const r = await desktop.newPage();
+  try {
+    await r.goto(BASE + new URL(link).hash);
+    await r.locator("#recv-active").waitFor();
+    await waitUntil(async () => {
+      if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the reload; use a bigger file");
+      return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
+    }, 180_000, "receiver stuck");
+    step("reloading the receiver mid-transfer");
+    await r.reload();
+    await r.locator("#recv-save").waitFor({ timeout: 300_000 });
+    const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
+    const got = sha(await readFile(await dl.path()));
+    if (got !== sha(buffer)) throw new Error("received file differs");
+    await page.locator("#send-done").waitFor({ timeout: 60_000 });
+  } finally {
+    await r.close();
+  }
+  // Once to tell it's a pipe, then once per stream: a few, not one for
+  // each of the file's 1 MiB ranges.
+  const opens = (await shell("logcat -d -s PipeProvider:I")).split("\n").filter((l) => l.includes(` open ${name}`)).length;
+  if (opens < 2 || opens > SIZE / MiB / 4) throw new Error(`opened ${opens} times`);
+  return `${SIZE / MiB} MiB streamed across a receiver reload (opened ${opens} times), hash OK`;
 };
 
 async function main() {
