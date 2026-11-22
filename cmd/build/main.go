@@ -84,45 +84,10 @@ func run(out string) error {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
-
-	// Build the engine.
-	raw := filepath.Join(out, "engine.wasm.tmp")
-	// -buildvcs=false: otherwise the git commit and dirty flag are
-	// stamped into the binary, and every commit would change the
-	// engine's hash and make browsers download it again.
-	cmd := exec.Command("go", "build", "-tags", wasmTags, "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", raw, "./cmd/engine")
-	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("go build engine: %w", err)
-	}
-	wasm, err := os.ReadFile(raw)
+	eng, err := buildEngine(out)
 	if err != nil {
 		return err
 	}
-	os.Remove(raw)
-
-	var gz bytes.Buffer
-	zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
-	if _, err := zw.Write(wasm); err != nil {
-		return err
-	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	sum := sha256.Sum256(gz.Bytes())
-	name := "engine." + hex.EncodeToString(sum[:6]) + ".wasm.gzip"
-	if err := os.WriteFile(filepath.Join(out, name), gz.Bytes(), 0o644); err != nil {
-		return err
-	}
-	sri := sha512.Sum384(gz.Bytes())
-	manifest, _ := json.MarshalIndent(map[string]any{
-		// Relative to the manifest, which lives in v/<hash>/.
-		"url":       "../../" + name,
-		"integrity": "sha384-" + base64.StdEncoding.EncodeToString(sri[:]),
-		"size":      gz.Len(),
-		"rawSize":   len(wasm),
-	}, "", "  ")
 
 	goroot, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {
@@ -133,16 +98,91 @@ func run(out string) error {
 		return err
 	}
 
-	// Collect the versioned assets: web/ (minus the root files),
-	// wasm_exec.js from the toolchain that built the engine, and the
-	// manifest.
-	assets := map[string][]byte{"engine-manifest.json": manifest}
-	wasmExec, err := os.ReadFile(filepath.Join(gorootDir, "lib", "wasm", "wasm_exec.js"))
+	assets, rootFiles, err := collectAssets(gorootDir, eng.manifest)
 	if err != nil {
 		return err
 	}
+	version := assetsVersion(assets)
+	if err := writeFiles(filepath.Join(out, "v", version), assets); err != nil {
+		return err
+	}
+
+	desc, commit := gitVersion()
+	if rootFiles["index.html"], err = rewriteIndex(rootFiles["index.html"], version, desc, commit); err != nil {
+		return err
+	}
+	if err := writeFiles(out, rootFiles); err != nil {
+		return err
+	}
+
+	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz), source %s",
+		out, version, eng.name, float64(eng.rawSize)/(1<<20), float64(eng.gzSize)/(1<<20), cmp.Or(desc, "unknown"))
+	return nil
+}
+
+// engine is the built engine: its file name in out, its manifest
+// (engine-manifest.json) and its sizes, raw and gzipped.
+type engine struct {
+	name            string
+	manifest        []byte
+	rawSize, gzSize int
+}
+
+// buildEngine compiles cmd/engine to js/wasm and writes it to out,
+// gzipped and named by content.
+func buildEngine(out string) (engine, error) {
+	raw := filepath.Join(out, "engine.wasm.tmp")
+	// -buildvcs=false: otherwise the git commit and dirty flag are
+	// stamped into the binary, and every commit would change the
+	// engine's hash and make browsers download it again.
+	cmd := exec.Command("go", "build", "-tags", wasmTags, "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", raw, "./cmd/engine")
+	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return engine{}, fmt.Errorf("go build engine: %w", err)
+	}
+	wasm, err := os.ReadFile(raw)
+	if err != nil {
+		return engine{}, err
+	}
+	os.Remove(raw)
+
+	var gz bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
+	if _, err := zw.Write(wasm); err != nil {
+		return engine{}, err
+	}
+	if err := zw.Close(); err != nil {
+		return engine{}, err
+	}
+	sum := sha256.Sum256(gz.Bytes())
+	name := "engine." + hex.EncodeToString(sum[:6]) + ".wasm.gzip"
+	if err := os.WriteFile(filepath.Join(out, name), gz.Bytes(), 0o644); err != nil {
+		return engine{}, err
+	}
+	sri := sha512.Sum384(gz.Bytes())
+	manifest, _ := json.MarshalIndent(map[string]any{
+		// Relative to the manifest, which lives in v/<hash>/.
+		"url":       "../../" + name,
+		"integrity": "sha384-" + base64.StdEncoding.EncodeToString(sri[:]),
+		"size":      gz.Len(),
+		"rawSize":   len(wasm),
+	}, "", "  ")
+	return engine{name: name, manifest: manifest, rawSize: len(wasm), gzSize: gz.Len()}, nil
+}
+
+// collectAssets reads web/ and splits it into the files served at the
+// root and the versioned assets, which also get wasm_exec.js from the
+// toolchain that built the engine, and the engine's manifest. Both map
+// slash-separated paths to contents.
+func collectAssets(goroot string, manifest []byte) (assets, rootFiles map[string][]byte, err error) {
+	assets = map[string][]byte{"engine-manifest.json": manifest}
+	wasmExec, err := os.ReadFile(filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"))
+	if err != nil {
+		return nil, nil, err
+	}
 	assets["wasm_exec.js"] = wasmExec
-	rootFiles := map[string][]byte{}
+	rootFiles = map[string][]byte{}
 	err = filepath.WalkDir("web", func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -163,8 +203,14 @@ func run(out string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	return assets, rootFiles, nil
+}
+
+// assetsVersion hashes the assets' names and contents into the name
+// of their version directory.
+func assetsVersion(assets map[string][]byte) string {
 	names := make([]string, 0, len(assets))
 	for n := range assets {
 		names = append(names, n)
@@ -175,41 +221,14 @@ func run(out string) error {
 		fmt.Fprintf(h, "%s\x00%d\x00", n, len(assets[n]))
 		h.Write(assets[n])
 	}
-	version := hex.EncodeToString(h.Sum(nil)[:6])
-	vdir := filepath.Join(out, "v", version)
-	for _, n := range names {
-		dst := filepath.Join(vdir, filepath.FromSlash(n))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, assets[n], 0o644); err != nil {
-			return err
-		}
-	}
+	return hex.EncodeToString(h.Sum(nil)[:6])
+}
 
-	// Point index.html into the version directory.
-	html := string(rootFiles["index.html"])
-	for _, ref := range []string{`href="style.css"`, `src="app.js"`} {
-		if strings.Count(html, ref) != 1 {
-			return fmt.Errorf("index.html: expected exactly one %s", ref)
-		}
-		attr, file, _ := strings.Cut(ref, `="`)
-		html = strings.Replace(html, ref, attr+`="v/`+version+"/"+file, 1)
-	}
-	// Say which source this is, in the footer.
-	const marker = "<!--build:version-->"
-	if strings.Count(html, marker) != 1 {
-		return fmt.Errorf("index.html: expected exactly one %s", marker)
-	}
-	desc, commit := gitVersion()
-	stamp := ""
-	if desc != "" {
-		stamp = `· Version <a href="https://github.com/Jckf/fileporter/commit/` + commit + `">` + htmlstd.EscapeString(desc) + `</a>`
-	}
-	html = strings.Replace(html, marker, stamp, 1)
-	rootFiles["index.html"] = []byte(html)
-	for n, b := range rootFiles {
-		dst := filepath.Join(out, filepath.FromSlash(n))
+// writeFiles writes files (slash-separated paths to contents) under
+// dir, creating directories as needed.
+func writeFiles(dir string, files map[string][]byte) error {
+	for n, b := range files {
+		dst := filepath.Join(dir, filepath.FromSlash(n))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
@@ -217,10 +236,30 @@ func run(out string) error {
 			return err
 		}
 	}
-
-	log.Printf("built %s: version %s, engine %s (%.1f MB raw, %.1f MB gz), source %s",
-		out, version, name, float64(len(wasm))/(1<<20), float64(gz.Len())/(1<<20), cmp.Or(desc, "unknown"))
 	return nil
+}
+
+// rewriteIndex points index.html's stylesheet and script into the
+// version directory, and stamps the source version (see gitVersion)
+// into the footer.
+func rewriteIndex(index []byte, version, desc, commit string) ([]byte, error) {
+	html := string(index)
+	for _, ref := range []string{`href="style.css"`, `src="app.js"`} {
+		if strings.Count(html, ref) != 1 {
+			return nil, fmt.Errorf("index.html: expected exactly one %s", ref)
+		}
+		attr, file, _ := strings.Cut(ref, `="`)
+		html = strings.Replace(html, ref, attr+`="v/`+version+"/"+file, 1)
+	}
+	const marker = "<!--build:version-->"
+	if strings.Count(html, marker) != 1 {
+		return nil, fmt.Errorf("index.html: expected exactly one %s", marker)
+	}
+	stamp := ""
+	if desc != "" {
+		stamp = `· Version <a href="https://github.com/Jckf/fileporter/commit/` + commit + `">` + htmlstd.EscapeString(desc) + `</a>`
+	}
+	return []byte(strings.Replace(html, marker, stamp, 1)), nil
 }
 
 // gitVersion describes the checked-out source: the latest tag (with
