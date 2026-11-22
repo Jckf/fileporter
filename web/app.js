@@ -55,7 +55,8 @@ if (platform.isApp) {
     location.href = "./"; // picked up below, on the start page
   });
   const fresh = frag.freshStart();
-  shared = await nativefile.takeShared();
+  // (Failing, it must not stop the page from loading: nothing was shared.)
+  shared = await nativefile.takeShared().catch((err) => { console.warn("takeShared failed:", err); return null; });
   if (shared?.link) {
     history.replaceState(null, "", shared.link);
   } else if (shared) {

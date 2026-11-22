@@ -354,7 +354,19 @@ async function clearReceived(state, message) {
   show("recv-cleared");
 }
 
-export async function receiver(state) {
+/**
+ * The receiving side, for a receiver link's state. Never rejects: a
+ * failure before or outside a session (storage, say) is shown, with a
+ * way to retry, rather than leaving the page blank.
+ */
+export function receiver(state) {
+  return receive(state).catch((err) => {
+    show("recv-active");
+    receiverFailed(err);
+  });
+}
+
+async function receive(state) {
   if (!(await storage.supported())) {
     // The way out is opening the link elsewhere, and in a private tab
     // (on phones especially) the address isn't easy to get at.
