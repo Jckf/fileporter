@@ -552,6 +552,9 @@ tests["app-send"] = async (p) => {
   await p.openReceiver(link, "privacy");
   if (sha(await p.download()) !== hash) throw new Error("downloaded file hash mismatch");
   if (ranges.some(([a, b]) => b < a || b >= file.buffer.length)) throw new Error(`asked for a range outside the file: ${JSON.stringify(ranges)}`);
+  // In order, each starting where the last ended: FilesPlugin.java keeps
+  // a streamed file's stream for the next range on that assumption.
+  if (ranges.some(([a], i) => a !== (i ? ranges[i - 1][1] + 1 : 0))) throw new Error(`ranges not read in order: ${JSON.stringify(ranges)}`);
   return `${ranges.length} ranges read`;
 };
 
