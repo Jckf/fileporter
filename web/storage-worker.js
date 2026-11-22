@@ -245,10 +245,15 @@ const ops = {
       st.metaObj = { v: 1, id, ...info, direct: !!target, status: "receiving", createdAt: Date.now(), lastActive: Date.now() };
     }
     if (st.metaObj.status === "complete") {
-      // Data is final; keep handles closed so the page can read it.
-      await closeHandles(st, ["data", "hashes"]);
+      // Data is final; its handle stays closed so the page can read it.
+      // The hashes stay readable: a sender that never heard "complete"
+      // (the connection dropped just then) resumes at the end, which
+      // needs the last chunk's hash, and checks the root again.
+      await closeHandles(st, ["data"]);
+      if (!st.hashes) st.hashes = await syncHandle(st.dir, "hashes.bin");
       await writeMeta(st);
-      return { chunks: Math.ceil(st.metaObj.size / st.metaObj.chunkSize), lastHash: null, status: "complete" };
+      const n = Math.ceil(st.metaObj.size / st.metaObj.chunkSize);
+      return { chunks: n, lastHash: await lastHash(st, n), status: "complete" };
     }
     if (!st.data && !st.target) st.data = await syncHandle(st.dir, "data");
     if (!st.hashes) st.hashes = await syncHandle(st.dir, "hashes.bin");

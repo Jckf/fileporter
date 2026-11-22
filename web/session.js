@@ -313,6 +313,9 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     });
     const { fromChunk, turn: senderTurn } = await link.next("start");
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
+    // A file we already have in full is only ever finished, not received
+    // again: the sender starting over means its file changed.
+    if (st.status === "complete" && fromChunk !== st.chunks) throw new FatalError("The sender's file has changed since you received it. Ask them for a new link.");
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
 
     const effective = effectiveMode(senderMode, state.rm);
