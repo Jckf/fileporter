@@ -239,7 +239,7 @@ async function startSender(state, file) {
     ? "You chose Fast. It's only used if the recipient also chooses Fast."
     : "You chose Private. The recipient won't see your IP address.");
   ui.fillFileCard($("send-active").querySelector(".file-card"), file);
-  setText("send-active-status", "Starting…");
+  setText("send-active-status", engineReady ? "Starting…" : "Getting ready…");
   $("send-invite").hidden = true; // until setupShare: there's no link yet
   const shown = ui.progressView("send-progress", "send-progress-text", file.size);
   // Reconnecting drops this session; the recipient redials.
@@ -317,7 +317,7 @@ async function startSender(state, file) {
 function senderStartFailed(err, before) {
   if ($("send-active").hidden) { before(err); return; }
   setGuard(false);
-  setText("send-active-status", `Couldn't start sending: ${errText(err)}. Reopen fileporter to try again.`);
+  setText("send-active-status", engineError ? engineFailedText() : `Couldn't start sending: ${errText(err)}. Reopen fileporter to try again.`);
 }
 
 // The relay nearest this device, measured once (relay.js); started when
@@ -337,8 +337,8 @@ export async function senderResume(state) {
   if (nativefile.picks()) nativePicker($("send-resume-file"), (file) => resumeWith?.(file), "send-resume-error");
   let accepted = false;
   resumeWith = async (file) => {
-    // Once a file is accepted, sending starts (perhaps after the engine
-    // loads); picking again meanwhile mustn't start a second sender.
+    // Once a file is accepted, sending starts; picking again meanwhile
+    // mustn't start a second sender.
     if (accepted) return true;
     if (!frag.sameFile(state.f, await frag.fileFingerprint(file))) {
       setText("send-resume-error", "That's not the same file. Choose the one you were sending.");
@@ -346,31 +346,29 @@ export async function senderResume(state) {
     }
     if (accepted) return true; // (a pick that finished while this one was checked)
     accepted = true;
-    setText("send-resume-error", engineReady ? "" : "Getting ready…");
-    engine.ready.then(
-      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, () => {
-        // So choosing the file again tries again: in a browser the input
-        // must be cleared too, or picking the same file fires no change.
-        accepted = false;
-        $("send-resume-file").value = "";
-        setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`);
-      })),
-      () => setText("send-resume-error", engineFailedText()),
-    );
+    setText("send-resume-error", "");
+    // At once, not after the engine loads: the transfer screen shows
+    // straight away (saying "Getting ready…"), so its status line is where
+    // waiting and any failure, the engine's included, appear.
+    startSender(state, file).catch((err) => senderStartFailed(err, () => {
+      // So choosing the file again tries again: in a browser the input
+      // must be cleared too, or picking the same file fires no change.
+      accepted = false;
+      $("send-resume-file").value = "";
+      setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`);
+    }));
     return true;
   };
   $("send-resume-file").onchange = () => {
     const file = $("send-resume-file").files[0];
     if (file) resumeWith(file);
   };
-  // Shown first, even when the app still has the file: until sending
-  // takes over (after the engine loads), it's where "Getting ready…" and
-  // any failure appear.
   setText("send-resume-error", "");
   setText("send-resume-mode", modeName(state.m));
-  show("send-resume");
-  // The app still has the file: carry on without asking for it.
+  // The app still has the file: carry on without asking for it (sending
+  // shows its own screen). Otherwise, or if it's not the same file, ask.
   const kept = state.u && nativefile.available() ? await nativefile.open(state.u) : null;
-  if (kept) await resumeWith(kept);
+  if (kept && (await resumeWith(kept))) return;
+  show("send-resume");
 }
 
