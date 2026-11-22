@@ -146,7 +146,7 @@ jobs:
         if: matrix.browser != 'webkit'
         run: |
           ip=$(ip -4 route get 1.1.1.1 | grep -oP 'src \K[\d.]+')
-          docker run -d --network host \
+          docker run -d --name turn --network host \
             coturn/coturn:4.19.2@sha256:ccdbc51e6f072130b0fc9eebda21f8d026d0a25581746c52557e887818011a3f \
             -n --no-tls --listening-port=3479 --min-port=50000 --max-port=50100 \
             --lt-cred-mech --user=fp:fp --realm=fileporter.test --listening-ip="$ip" --relay-ip="$ip"
@@ -154,6 +154,10 @@ jobs:
       - name: Run e2e tests
         working-directory: test
         run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
+      # turn-lanes failing says little without the TURN server's side.
+      - name: TURN server log
+        if: failure() && matrix.browser != 'webkit'
+        run: docker logs turn 2>&1 | tail -200
 
   deploy:
     needs: [build, test, lint]
