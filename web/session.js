@@ -199,7 +199,7 @@ export async function senderSession(conn, { state, file, hashes, iceServers, tur
     });
     const resume = await link.nextOf("resume", "nospace");
     if (resume.t === "nospace") throw new NoSpaceError(NOSPACE_SENDER);
-    if (resume.id !== state.id) throw new FatalError("receiver is on a different transfer");
+    if (resume.id !== state.id) throw new FatalError("The recipient opened a different transfer. Ask them to open the link you sent.");
     let from = Number.isInteger(resume.fromChunk) && resume.fromChunk >= 0 && resume.fromChunk <= n ? resume.fromChunk : 0;
     if (from > 0 && hex(await hashes.get(from - 1)) !== resume.prevHash) from = 0;
     const effective = effectiveMode(state.m, resume.mode);
