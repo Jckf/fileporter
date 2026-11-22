@@ -13,6 +13,7 @@ import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
 import { senderSession, receiverSession, ChunkHashes, FatalError, CancelledError, NeedsRoomError, fmtBytes } from "./session.js";
 import * as savetarget from "./savetarget.js";
+import * as turn from "./turn.js";
 import * as ui from "./ui.js";
 import { keepAwake } from "./wakelock.js";
 import * as dl from "./download.js";
@@ -155,7 +156,45 @@ $("send-file-clear").onclick = () => {
   showPickedFile();
   $("send-file").focus();
 };
-for (const r of document.querySelectorAll('input[name="send-mode"]')) r.onchange = updateStartButton;
+for (const r of document.querySelectorAll('input[name="send-mode"]')) {
+  r.onchange = () => {
+    updateStartButton();
+    $("turn-settings").hidden = pickedMode("send-mode") !== "performance";
+  };
+}
+
+// (A reload can restore the choice.)
+$("turn-settings").hidden = pickedMode("send-mode") !== "performance";
+
+// The sender's own TURN server (turn.js), offered with Fast.
+function showTurnSettings() {
+  const [saved] = turn.load();
+  $("turn-urls").value = saved ? saved.urls.join(" ") : "";
+  $("turn-username").value = saved?.username || "";
+  $("turn-credential").value = saved?.credential || "";
+  $("turn-clear").hidden = !saved;
+  return saved;
+}
+if (showTurnSettings()) setText("turn-status", "Saved. It's used when a direct connection isn't possible.");
+$("turn-save").onclick = () => {
+  const st = $("turn-status");
+  try {
+    const servers = turn.parse($("turn-urls").value, $("turn-username").value, $("turn-credential").value);
+    if (!turn.save(servers)) throw new Error("This browser won't let fileporter save it.");
+    showTurnSettings();
+    st.className = "small";
+    st.textContent = servers.length ? "Saved. It's used when a direct connection isn't possible." : "Removed.";
+  } catch (err) {
+    st.className = "small error";
+    st.textContent = err.message;
+  }
+};
+$("turn-clear").onclick = () => {
+  turn.save([]);
+  showTurnSettings();
+  $("turn-status").className = "small";
+  setText("turn-status", "Removed.");
+};
 
 // The app picks through its plugin instead of the web view's picker: it
 // keeps access to the file, so an interrupted send carries on without
@@ -273,6 +312,7 @@ async function startSender(state, file) {
       try {
         await senderSession(conn, {
           state, file, hashes, iceServers, iceTimeoutMs: config.iceTimeoutMs, ctl,
+        turnServers: state.m === "performance" ? turn.load() : [],
           onProgress: progress,
           onStatus: (s) => {
             if (s.phase === "negotiated") {
@@ -281,9 +321,9 @@ async function startSender(state, file) {
             }
             if (s.phase === "transport") {
               $("send-transfer").dataset.phase = "active";
-              ui.setBadge($("send-badge"), s.via);
+              ui.setBadge($("send-badge"), s.via, s.turn ? "your" : null);
               setText("send-active-status", "Sending");
-              stall.start(s.via, relayName(listener.region));
+              stall.start(s.turn ? "turn" : s.via, relayName(listener.region));
             }
             if (s.phase === "verifying") {
               stall.stop();
@@ -601,9 +641,9 @@ async function receiverLoop(state) {
           }
           if (s.phase === "transport") {
             $("recv-transfer").dataset.phase = "active";
-            ui.setBadge($("recv-badge"), s.via);
+            ui.setBadge($("recv-badge"), s.via, s.turn ? "the sender's" : null);
             setText("recv-active-status", "Receiving");
-            stall?.start(s.via, relayName(conn.region));
+            stall?.start(s.turn ? "turn" : s.via, relayName(conn.region));
           }
           if (s.phase === "verifying") {
             stall?.stop();

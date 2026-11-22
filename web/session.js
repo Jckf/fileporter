@@ -7,9 +7,11 @@
 //   S→R {t:"hello", v, id, mode, name, size, type, chunkSize}
 //   R→S {t:"resume", id, mode, fromChunk, prevHash}
 //         prevHash = SHA-256 of chunk fromChunk-1 as the receiver stored it
-//   S→R {t:"start", fromChunk}
+//   S→R {t:"start", fromChunk, turn?}
 //         the sender's answer: fromChunk, or 0 if prevHash doesn't match
-//         its file (the file changed between sessions)
+//         its file (the file changed between sessions). turn: the
+//         sender's own TURN servers (turn.js), only when both sides
+//         chose performance; the receiver ignores it otherwise
 //   … mode negotiation: privacy if either side chose privacy; only in
 //     performance mode: {t:"rtc"/"ice"} signaling over the Link …
 //   S→R {t:"transport", via:"rtc"|"relay"}               (sender decides)
@@ -29,6 +31,7 @@
 import { Link, RtcTransport } from "./transport.js";
 import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
+import * as turn from "./turn.js";
 
 export const PROTOCOL_VERSION = 1;
 export const CHUNK = 1 << 20;
@@ -88,7 +91,7 @@ export class ChunkHashes {
  * callbacks: onStatus({phase, ...}), onProgress(bytesConfirmed)
  * ctl: {} that this function fills with stop() and cancel()
  */
-export async function senderSession(conn, { state, file, hashes, iceServers, iceTimeoutMs, onStatus, onProgress, ctl }) {
+export async function senderSession(conn, { state, file, hashes, iceServers, turnServers = [], iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);
   let transport = link;
   // ctl lets the page stop this session, or cancel it (telling the peer).
@@ -116,24 +119,29 @@ export async function senderSession(conn, { state, file, hashes, iceServers, ice
     if (resume.id !== state.id) throw new FatalError("receiver is on a different transfer");
     let from = Number.isInteger(resume.fromChunk) && resume.fromChunk >= 0 && resume.fromChunk <= n ? resume.fromChunk : 0;
     if (from > 0 && hex(await hashes.get(from - 1)) !== resume.prevHash) from = 0;
-    await link.send({ t: "start", fromChunk: from });
-
     const effective = effectiveMode(state.m, resume.mode);
+    // Our TURN servers, only where both chose performance: in privacy
+    // mode only the public relays may see either side.
+    const ownTurn = effective === "performance" ? turn.sanitize(turnServers) : [];
+    await link.send({ t: "start", fromChunk: from, ...(ownTurn.length ? { turn: ownTurn } : {}) });
+
     onStatus({ phase: "negotiated", effective, peerMode: resume.mode, fromChunk: from });
 
+    let relayed = false;
     if (effective === "performance") {
       try {
         const { pc, dc } = await rtc.connect({
           localMode: state.m, effectiveMode: effective, offerer: true,
-          signal: link.signal(), iceServers, timeoutMs: iceTimeoutMs,
+          signal: link.signal(), iceServers: [...iceServers, ...ownTurn], timeoutMs: iceTimeoutMs,
         });
         transport = new RtcTransport(pc, dc, chunkLenFor(file.size));
+        relayed = ownTurn.length > 0 && (await rtc.usesRelay(pc));
       } catch (err) {
         console.info("direct connection failed, using relay:", err.message);
       }
     }
     await link.send({ t: "transport", via: transport.via });
-    onStatus({ phase: "transport", via: transport.via });
+    onStatus({ phase: "transport", via: transport.via, turn: relayed });
 
     // Acks, completion and cancellation arrive on the transport while
     // we send; a small state machine shared with the send loop.
@@ -251,7 +259,7 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     // claiming something weaker now doesn't change it.
     const senderMode = effectiveMode(state.sm, hello.mode);
     await link.send({ t: "resume", id: state.id, mode: state.rm, fromChunk: st.chunks, prevHash: st.lastHash });
-    const { fromChunk } = await link.next("start");
+    const { fromChunk, turn: senderTurn } = await link.next("start");
     if (!Number.isInteger(fromChunk) || fromChunk < 0 || fromChunk > st.chunks) throw new Error("bad start");
     if (fromChunk !== st.chunks) await storage.truncate(state.id, fromChunk);
 
@@ -260,21 +268,25 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
 
     let attempt = null;
     if (effective === "performance") {
+      // The sender's TURN servers, if any: only ever here, where both
+      // chose performance (and WebRTC is locked out otherwise anyway).
       attempt = rtc.connect({
         localMode: state.rm, effectiveMode: effective, offerer: false,
-        signal: link.signal(), iceServers, timeoutMs: iceTimeoutMs + 5000,
+        signal: link.signal(), iceServers: [...iceServers, ...turn.sanitize(senderTurn)], timeoutMs: iceTimeoutMs + 5000,
       });
       attempt.catch(() => {}); // the sender's transport decision is what counts
     }
     const { via } = await link.next("transport");
+    let relayed = false;
     if (via === "rtc") {
       if (!attempt) throw new FatalError("The sender tried to connect directly, but you chose Private. The transfer was stopped to keep your IP address hidden.");
       const { pc, dc } = await attempt;
       transport = new RtcTransport(pc, dc, chunkLenFor(hello.size));
+      relayed = senderTurn != null && (await rtc.usesRelay(pc));
     } else {
       attempt?.then(({ pc }) => pc.close(), () => {});
     }
-    onStatus({ phase: "transport", via });
+    onStatus({ phase: "transport", via, turn: relayed });
 
     let have = fromChunk;
     onProgress(Math.min(hello.size, have * CHUNK));

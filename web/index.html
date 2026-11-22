@@ -152,6 +152,21 @@
             <p><strong>Private</strong> passes everything through a relay server, so neither of you sees the other's IP address. The relay only forwards encrypted data and can't read your file. It's slower.</p>
             <p><strong>Fast</strong> connects your devices directly when the network allows it. It's much quicker, but you can see each other's IP addresses. It's only used if <em>both</em> of you choose Fast; otherwise the transfer stays private.</p>
           </details>
+          <!-- Shown while Fast is chosen (app.js, turn.js) -->
+          <details id="turn-settings" class="explain" hidden>
+            <summary>Use your own relay server</summary>
+            <p>When your devices can't connect directly, a TURN server of yours can pass the data along, much faster than fileporter's relay. It's only used if you and the recipient both choose Fast. The recipient gets the server's address and login through the encrypted connection, never in the link. Saved on this device only.</p>
+            <div class="turn-form">
+              <label>TURN address <input id="turn-urls" type="text" placeholder="turn:relay.example.com:3478" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+              <label>Username <input id="turn-username" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+              <label>Password <input id="turn-credential" type="password" autocomplete="new-password"></label>
+            </div>
+            <div class="row-buttons">
+              <button id="turn-save" class="secondary">Save</button>
+              <button id="turn-clear" class="ghost" hidden>Remove</button>
+            </div>
+            <p id="turn-status" class="small" role="status" aria-live="polite"></p>
+          </details>
         </fieldset>
 
         <button id="send-start" class="primary block" disabled>Getting ready…</button>
@@ -262,7 +277,7 @@
             <label class="mode">
               <input type="radio" name="recv-mode" value="performance">
               <span class="mode-icon"><svg class="icon"><use href="#i-bolt"/></svg></span>
-              <span class="mode-text"><strong>Fast</strong><span>A direct connection, much quicker. The sender can see your IP address.</span></span>
+              <span class="mode-text"><strong>Fast</strong><span>A direct connection, much quicker. The sender (and their relay server, if they use their own) can see your IP address.</span></span>
             </label>
           </div>
           <details class="explain">

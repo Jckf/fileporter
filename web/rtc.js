@@ -51,6 +51,24 @@ export async function stunServers(derpMapURL, max = 2) {
 }
 
 /**
+ * Whether the connection goes through a TURN relay (the sender's own,
+ * see turn.js) rather than directly. False if it can't tell.
+ */
+export async function usesRelay(pc) {
+  try {
+    const stats = [...(await pc.getStats()).values()];
+    const byId = new Map(stats.map((s) => [s.id, s]));
+    const transport = stats.find((s) => s.type === "transport" && s.selectedCandidatePairId);
+    const pair = transport ? byId.get(transport.selectedCandidatePairId)
+      : stats.find((s) => s.type === "candidate-pair" && s.nominated && s.state === "succeeded");
+    if (!pair) return false;
+    return [pair.localCandidateId, pair.remoteCandidateId].some((id) => byId.get(id)?.candidateType === "relay");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Buffers messages from the moment the channel exists, so nothing the
  * peer sends right after open is lost. dc.takeOver(fn) replays the
  * buffer into fn and then delivers new messages to it directly.

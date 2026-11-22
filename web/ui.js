@@ -64,8 +64,15 @@ export function fillFileCard(card, { name, size }) {
 }
 
 /** "Direct" / "Relayed" pill. */
-export function setBadge(el, via) {
+export function setBadge(el, via, turnOwner = null) {
   el.hidden = false;
+  if (via === "rtc" && turnOwner) {
+    // WebRTC, but through the sender's own TURN server (turn.js).
+    el.className = "badge relay";
+    el.replaceChildren(icon("i-relay"), document.createTextNode("Relayed"));
+    el.title = `Going through ${turnOwner} relay server.`;
+    return;
+  }
   el.className = `badge ${via === "rtc" ? "direct" : "relay"}`;
   el.replaceChildren(icon(via === "rtc" ? "i-direct" : "i-relay"), document.createTextNode(via === "rtc" ? "Direct" : "Relayed"));
   el.title = via === "rtc"

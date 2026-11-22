@@ -290,6 +290,64 @@ for (const [sm, rm, wantVia] of [
   };
 }
 
+// The sender's own TURN server: handed to the recipient only when both
+// chose Fast. (No TURN server runs here; the transfer itself goes
+// direct, or over the tunnel relay where WebRTC can't connect.)
+const TURN = { urls: "turn:127.0.0.1:9", username: "fp-user", credential: "fp-secret" };
+for (const [sm, rm] of [["performance", "performance"], ["performance", "privacy"], ["privacy", "performance"]]) {
+  tests[`turn-${sm}-${rm}`] = async (p) => {
+    const s = p.sender, r = p.receiver;
+    await s.goto(BASE);
+    await s.check('input[name="send-mode"][value="performance"]');
+    await s.click("#turn-settings summary");
+    await s.fill("#turn-urls", "turn:bad host");
+    await s.click("#turn-save");
+    await s.locator("#turn-status.error").waitFor();
+    await s.fill("#turn-urls", TURN.urls);
+    await s.fill("#turn-username", TURN.username);
+    await s.fill("#turn-credential", TURN.credential);
+    await s.click("#turn-save");
+    await s.locator("#turn-clear:visible").waitFor();
+    await s.check('input[name="send-mode"][value="privacy"]');
+    if (await s.locator("#turn-settings").isVisible()) throw new Error("TURN settings shown with Private");
+    // What the receiver hears from the sender, and what it gives WebRTC.
+    await r.addInitScript(() => {
+      window.__starts = [];
+      window.__ice = [];
+      const parse = JSON.parse;
+      JSON.parse = function (...a) {
+        const v = parse.apply(this, a);
+        if (v && v.t === "start") window.__starts.push(v);
+        return v;
+      };
+      const PC = window.RTCPeerConnection;
+      if (PC) {
+        window.RTCPeerConnection = new Proxy(PC, {
+          construct(t, a) { window.__ice.push(JSON.stringify(a[0]?.iceServers || [])); return Reflect.construct(t, a); },
+        });
+      }
+    });
+    const { file, hash } = mkFile(MiB + 77);
+    const link = await p.startSender(file, sm);
+    await p.openReceiver(link, sm, rm);
+    if (sha(await p.download()) !== hash) throw new Error("hash mismatch");
+    const starts = await r.evaluate(() => window.__starts);
+    const ice = (await r.evaluate(() => window.__ice)).join(" ");
+    if (!starts.length) throw new Error("never saw the start message");
+    const handed = starts.some((m) => m.turn);
+    if (sm === "performance" && rm === "performance") {
+      if (!handed) throw new Error("TURN server not handed over in Fast mode");
+      const t = starts.find((m) => m.turn).turn[0];
+      if (t.urls[0] !== TURN.urls || t.username !== TURN.username || t.credential !== TURN.credential) throw new Error(`wrong TURN server: ${JSON.stringify(t)}`);
+      if (!ice.includes(TURN.urls)) throw new Error(`receiver's WebRTC didn't get it: ${ice}`);
+      return "handed over";
+    }
+    if (handed) throw new Error("TURN server handed over outside Fast mode");
+    if (ice.includes("turn:")) throw new Error("receiver used a TURN server outside Fast mode");
+    return "kept back";
+  };
+}
+
 tests["save-picker"] = async (p) => {
   // Chromium's save path: showSaveFilePicker and a stream into the
   // chosen file. The initScript hides the real picker (Playwright can't
