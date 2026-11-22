@@ -89,13 +89,29 @@ const fmtDuration = (s) => {
 
 /**
  * Returns an update(bytes) function driving a <progress> and a text line
- * "x of y · rate · time left", with a rate estimate over ~5 s.
+ * "x of y · rate · time left", with a rate estimate over ~5 s. Updates
+ * come with every acknowledged chunk, at fast rates far more often than
+ * the screen redraws, so they're drawn at most once per frame.
  */
 export function progressView(barId, textId, total) {
   const samples = [];
   const bar = $(barId);
   const text = $(textId);
   bar.max = total || 1;
+  let latest = null; // [bytes, rate] not yet drawn
+  let frame = 0;
+  const draw = () => {
+    frame = 0;
+    const [bytes, rate] = latest;
+    bar.value = total ? bytes : 1;
+    const parts = [`${fmtBytes(bytes)} of ${fmtBytes(total)}`];
+    if (rate > 0 && bytes < total) {
+      parts.push(`${fmtBytes(rate)}/s`);
+      const eta = fmtDuration((total - bytes) / rate);
+      if (eta) parts.push(eta);
+    }
+    text.textContent = parts.join(" · ");
+  };
   return (bytes) => {
     const now = performance.now();
     const last = samples.at(-1);
@@ -109,14 +125,8 @@ export function progressView(barId, textId, total) {
     while (samples.length > 2 && now - samples[0][0] > 5000) samples.shift();
     const [t0, b0] = samples[0];
     const rate = now - t0 > 500 ? ((bytes - b0) * 1000) / (now - t0) : 0;
-    bar.value = total ? bytes : 1;
-    const parts = [`${fmtBytes(bytes)} of ${fmtBytes(total)}`];
-    if (rate > 0 && bytes < total) {
-      parts.push(`${fmtBytes(rate)}/s`);
-      const eta = fmtDuration((total - bytes) / rate);
-      if (eta) parts.push(eta);
-    }
-    text.textContent = parts.join(" · ");
+    latest = [bytes, rate];
+    frame ||= requestAnimationFrame(draw);
   };
 }
 
