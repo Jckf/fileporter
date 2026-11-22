@@ -114,9 +114,7 @@ export class Link extends EventQueue {
         if (f.type === T_CONTROL) {
           this.push({ kind: "control", msg: FramedConn.decodeControl(f.payload) });
         } else if (f.type === T_DATA) {
-          if (f.payload.length < 4) throw new Error("short data frame");
-          const idx = new DataView(f.payload.buffer, f.payload.byteOffset, 4).getUint32(0);
-          this.push({ kind: "chunk", idx, bytes: f.payload.slice(4) });
+          this.push({ kind: "chunk", idx: f.idx, bytes: f.payload });
         }
       }
       this.close();

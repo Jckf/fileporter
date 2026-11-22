@@ -90,7 +90,12 @@ export class FramedConn {
     return out;
   }
 
-  /** Returns {type, payload} or null on clean EOF. */
+  /**
+   * Returns {type, payload}, with idx for a data frame (its first four
+   * bytes, not in payload), or null on clean EOF. The index is taken on
+   * its own so a chunk's payload comes out as its own buffer, which
+   * storage.write can hand over without another copy.
+   */
   async readFrame() {
     if (!(await this.fill(HDR))) {
       if (this.avail) throw new Error("truncated frame header");
@@ -101,6 +106,12 @@ export class FramedConn {
     const len = new DataView(hdr.buffer, hdr.byteOffset, HDR).getUint32(1);
     if (len > MAX_FRAME) throw new Error(`frame too large: ${len}`);
     if (!(await this.fill(len))) throw new Error("truncated frame");
+    if (type === T_DATA) {
+      if (len < 4) throw new Error("short data frame");
+      const i = this.take(4);
+      const idx = new DataView(i.buffer, i.byteOffset, 4).getUint32(0);
+      return { type, idx, payload: len > 4 ? this.take(len - 4) : new Uint8Array(0) };
+    }
     return { type, payload: len ? this.take(len) : new Uint8Array(0) };
   }
 
