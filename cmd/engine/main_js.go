@@ -33,6 +33,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"syscall/js"
 	"time"
 
@@ -198,14 +199,23 @@ func tsListen(this js.Value, args []js.Value) any {
 			srv.Close()
 			return nil, fmt.Errorf("Server.Start: %w", err)
 		}
-		return map[string]any{
+		ln := js.ValueOf(map[string]any{
 			"addr":   string(pk.Public.Addr()),
 			"region": ci.Region[0].RegionCode, // the relay, for diagnostics
-			"close": js.FuncOf(func(this js.Value, args []js.Value) any {
+		})
+		// Released on close, like a Conn's methods (see makeJSConn).
+		var once sync.Once
+		var closeFn js.Func
+		closeFn = js.FuncOf(func(this js.Value, args []js.Value) any {
+			once.Do(func() {
 				srv.Close()
-				return nil
-			}),
-		}, nil
+				ln.Set("close", closedClose)
+				closeFn.Release()
+			})
+			return nil
+		})
+		ln.Set("close", closeFn)
+		return ln, nil
 	})
 }
 
@@ -293,60 +303,94 @@ func pingUntil(ctx context.Context, cl *tailcat.Client) error {
 //
 // read is pull-based, so a fast sender stalls on TCP backpressure
 // instead of filling memory.
+//
+// close releases the methods' js.Funcs. syscall/js keeps every Func in
+// a global table until then, and with it the conn, its read buffer and
+// (for tsDial) the whole tailcat.Client. Calling a released Func only
+// logs a console error and returns undefined, so close also swaps the
+// methods for shared stubs: the others reject, close does nothing. A
+// read or write already in flight is unaffected: its goroutine holds
+// the conn and buffer, not the Func, and settles (with an error) once
+// the conn is closed.
 func makeJSConn(c net.Conn, port uint16, onClose func()) js.Value {
 	buf := make([]byte, 64<<10)
-	return js.ValueOf(map[string]any{
-		"port": int(port),
-		"read": js.FuncOf(func(this js.Value, args []js.Value) any {
-			return makePromise(func() (any, error) {
-				for {
-					n, err := c.Read(buf)
-					if n > 0 {
-						u8 := js.Global().Get("Uint8Array").New(n)
-						js.CopyBytesToJS(u8, buf[:n])
-						return u8, nil
-					}
-					if errors.Is(err, io.EOF) {
-						return js.Null(), nil
-					}
-					if err != nil {
-						return nil, err
-					}
-					// (0, nil) is allowed and means nothing yet, not EOF.
+	read := js.FuncOf(func(this js.Value, args []js.Value) any {
+		return makePromise(func() (any, error) {
+			for {
+				n, err := c.Read(buf)
+				if n > 0 {
+					u8 := js.Global().Get("Uint8Array").New(n)
+					js.CopyBytesToJS(u8, buf[:n])
+					return u8, nil
 				}
-			})
-		}),
-		"write": js.FuncOf(func(this js.Value, args []js.Value) any {
-			if len(args) != 1 {
-				return rejectedPromise(errors.New("write requires a Uint8Array"))
-			}
-			b := make([]byte, args[0].Get("length").Int())
-			js.CopyBytesToGo(b, args[0])
-			return makePromise(func() (any, error) {
-				if _, err := c.Write(b); err != nil {
+				if errors.Is(err, io.EOF) {
+					return js.Null(), nil
+				}
+				if err != nil {
 					return nil, err
 				}
-				return js.Undefined(), nil
-			})
-		}),
-		"closeWrite": js.FuncOf(func(this js.Value, args []js.Value) any {
-			return makePromise(func() (any, error) {
-				cw, ok := c.(interface{ CloseWrite() error })
-				if !ok {
-					return nil, errors.New("connection does not support half-close")
-				}
-				return js.Undefined(), cw.CloseWrite()
-			})
-		}),
-		"close": js.FuncOf(func(this js.Value, args []js.Value) any {
+				// (0, nil) is allowed and means nothing yet, not EOF.
+			}
+		})
+	})
+	write := js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) != 1 {
+			return rejectedPromise(errors.New("write requires a Uint8Array"))
+		}
+		b := make([]byte, args[0].Get("length").Int())
+		js.CopyBytesToGo(b, args[0])
+		return makePromise(func() (any, error) {
+			if _, err := c.Write(b); err != nil {
+				return nil, err
+			}
+			return js.Undefined(), nil
+		})
+	})
+	closeWrite := js.FuncOf(func(this js.Value, args []js.Value) any {
+		return makePromise(func() (any, error) {
+			cw, ok := c.(interface{ CloseWrite() error })
+			if !ok {
+				return nil, errors.New("connection does not support half-close")
+			}
+			return js.Undefined(), cw.CloseWrite()
+		})
+	})
+	jc := js.ValueOf(map[string]any{
+		"port":       int(port),
+		"read":       read,
+		"write":      write,
+		"closeWrite": closeWrite,
+	})
+	var once sync.Once
+	var closeFn js.Func
+	closeFn = js.FuncOf(func(this js.Value, args []js.Value) any {
+		once.Do(func() {
 			c.Close()
 			if onClose != nil {
 				onClose()
 			}
-			return nil
-		}),
+			jc.Set("read", closedMethod)
+			jc.Set("write", closedMethod)
+			jc.Set("closeWrite", closedMethod)
+			jc.Set("close", closedClose)
+			for _, f := range []js.Func{read, write, closeWrite, closeFn} {
+				f.Release()
+			}
+		})
+		return nil
 	})
+	jc.Set("close", closeFn)
+	return jc
 }
+
+// closedMethod and closedClose replace a closed Conn's (or Listener's)
+// methods. They're shared, so they hold on to nothing.
+var (
+	closedMethod = js.FuncOf(func(this js.Value, args []js.Value) any {
+		return rejectedPromise(net.ErrClosed)
+	})
+	closedClose = js.FuncOf(func(this js.Value, args []js.Value) any { return nil })
+)
 
 func optString(v js.Value, name string) string {
 	if p := v.Get(name); p.Type() == js.TypeString {
