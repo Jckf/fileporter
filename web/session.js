@@ -122,8 +122,8 @@ export class ChunkHashes {
  * chunks flow but while connecting or verifying too. That stops the
  * session at once, and cancelledOr(err) turns the error that stopping
  * causes into CancelledError(cancelledText). watch(transport) adds a
- * direct connection once it takes over (the peer cancels on whichever
- * it's using).
+ * direct connection once it takes over: ctl.cancel also sends on the
+ * link, but an older peer cancels only on the connection it's using.
  */
 function sessionControl(ctl, link, current, cancelledText) {
   const connecting = new AbortController();
@@ -187,7 +187,7 @@ function openLane(transport, options, l) {
  * drops (the receiver will redial) or with FatalError.
  *
  * callbacks: onStatus({phase, ...}), onProgress(bytesConfirmed)
- * ctl: {} that this function fills with stop() and cancel()
+ * ctl: {} that this function fills with stop(), bye() and cancel()
  */
 export async function senderSession(conn, { state, file, hashes, iceServers, turnServers = [], iceTimeoutMs, onStatus, onProgress, ctl }) {
   const link = new Link(conn);

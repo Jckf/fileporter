@@ -310,7 +310,8 @@ const ops = {
   /** Discards partial data (e.g. checksum mismatch), keeping the transfer. */
   async reset({ id }) {
     const st = requireOpen(id);
-    // (A complete transfer has its data handle closed; see open.)
+    // (Defensive: session.js never resets a complete transfer, whose data
+    // handle open() leaves closed.)
     if (!st.data && !st.target) st.data = await syncHandle(st.dir, "data");
     if (!st.hashes) st.hashes = await syncHandle(st.dir, "hashes.bin");
     await truncateTo(st, 0);
