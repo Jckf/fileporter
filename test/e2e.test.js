@@ -377,13 +377,21 @@ for (const [sm, rm] of [["performance", "performance"], ["performance", "privacy
 const LOCAL_TURN = process.env.FP_TURN
   ? { urls: process.env.FP_TURN, username: process.env.FP_TURN_USER || "fp", credential: process.env.FP_TURN_PASS || "fp" }
   : null;
-tests["turn-lanes"] = async (p) => {
+/**
+ * Opens the sender's start page with its own TURN server set to `turn`,
+ * its peer connections limited to the relay (as on a network where
+ * direct connections fail) and tracked: window.__lanes.max is the most
+ * connected at once, window.__pcs all of them.
+ */
+async function relayedSender(p, turn) {
   await p.sender.addInitScript(() => {
     window.__lanes = { up: 0, max: 0 };
+    window.__pcs = [];
     const PC = window.RTCPeerConnection;
     window.RTCPeerConnection = new Proxy(PC, {
       construct(t, [cfg = {}, ...rest]) {
         const pc = Reflect.construct(t, [{ ...cfg, iceTransportPolicy: "relay" }, ...rest]);
+        window.__pcs.push(pc);
         let up = false;
         pc.addEventListener("connectionstatechange", () => {
           const now = pc.connectionState === "connected";
@@ -400,11 +408,20 @@ tests["turn-lanes"] = async (p) => {
   await s.goto(BASE, NAV);
   await s.check('input[name="send-mode"][value="performance"]');
   await s.click("#turn-settings summary");
-  await s.fill("#turn-urls", LOCAL_TURN.urls);
-  await s.fill("#turn-username", LOCAL_TURN.username);
-  await s.fill("#turn-credential", LOCAL_TURN.credential);
+  await s.fill("#turn-urls", turn.urls);
+  await s.fill("#turn-username", turn.username);
+  await s.fill("#turn-credential", turn.credential);
   await s.click("#turn-save");
   await s.locator("#turn-clear:visible").waitFor();
+}
+const needsTurn = ({ rtcWorks }) =>
+  !LOCAL_TURN ? "needs a TURN server (FP_TURN), which CI starts"
+    : !rtcWorks ? "WebRTC can't connect in this environment" : null;
+const lanesUp = (page) => page.evaluate(() => window.__lanes.up);
+
+tests["turn-lanes"] = async (p) => {
+  await relayedSender(p, LOCAL_TURN);
+  const s = p.sender;
   const { file, hash } = mkFile(24 * MiB + 4321);
   const link = await p.startSender(file, "performance");
   await p.openReceiver(link, "performance", "performance");
@@ -415,9 +432,41 @@ tests["turn-lanes"] = async (p) => {
   if (await badgeVia(p.receiver, "#recv-badge") !== "relay") throw new Error("receiver's badge doesn't say relayed");
   return `${lanes} lanes`;
 };
-tests["turn-lanes"].skipWhy = ({ rtcWorks }) =>
-  !LOCAL_TURN ? "needs a TURN server (FP_TURN), which CI starts"
-    : !rtcWorks ? "WebRTC can't connect in this environment" : null;
+tests["turn-lanes"].skipWhy = needsTurn;
+
+// One lane dropping mid-transfer loses the chunks in flight on it: the
+// session ends and resumes, and the file must still arrive intact.
+tests["turn-lane-drop"] = async (p) => {
+  await relayedSender(p, LOCAL_TURN);
+  const { path, hash } = await fileOnDisk(p, 64 * MiB + 77); // (over Playwright's 50 MB in-memory limit)
+  const link = await p.startSender(path, "performance");
+  await p.openReceiver(link, "performance", "performance");
+  await waitUntil(async () => (await lanesUp(p.sender)) >= 2, 60_000, "no extra lanes came up");
+  await p.waitRecvAtLeast(8 * MiB);
+  await p.sender.evaluate(() => window.__pcs.filter((pc) => pc.connectionState === "connected").at(-1).close());
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch after a lane dropped");
+  if (!p.logs.some((l) => l.startsWith("R") && l.includes("session dropped"))) throw new Error("the session didn't drop and resume");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+};
+tests["turn-lane-drop"].skipWhy = needsTurn;
+
+// The sender cancelling a relayed transfer over lanes: its cancel must
+// reach the receiver even with chunks queued ahead of it on the lanes
+// (it also goes over the link).
+tests["turn-cancel-by-sender"] = async (p) => {
+  await relayedSender(p, LOCAL_TURN);
+  const { path } = await fileOnDisk(p, 64 * MiB);
+  const link = await p.startSender(path, "performance");
+  await p.openReceiver(link, "performance", "performance");
+  await waitUntil(async () => (await lanesUp(p.sender)) >= 2, 60_000, "no extra lanes came up");
+  await p.waitRecvAtLeast(4 * MiB);
+  await p.sender.click("#send-cancel");
+  await p.sender.locator("#cancelled").waitFor();
+  await p.receiver.locator("#cancelled", { hasText: "sender cancelled" }).waitFor({ timeout: 30_000 });
+  await assertCleanedUp(p);
+};
+tests["turn-cancel-by-sender"].skipWhy = needsTurn;
+
 
 tests["save-picker"] = async (p) => {
   // Chromium's save path: showSaveFilePicker and a stream into the
@@ -693,6 +742,16 @@ tests["stall-reconnect"] = async (p) => {
 // connection in Chromium; elsewhere the transfer just carries on.
 tests["stall-reconnect"].browsers = ["chromium"];
 tests["stall-reconnect"].browsersWhy = "offline mode doesn't cut a worker's WebSocket here";
+
+/** A file on disk, so re-picking it after a reload gives the same fingerprint. */
+async function fileOnDisk(p, size) {
+  const { file: mem, hash } = mkFile(size);
+  const dir = await mkdtemp(join(tmpdir(), "fileporter-e2e-"));
+  const path = join(dir, mem.name);
+  await writeFile(path, mem.buffer);
+  p.cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  return { path, buffer: mem.buffer, hash };
+}
 
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
