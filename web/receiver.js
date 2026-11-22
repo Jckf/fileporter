@@ -346,9 +346,14 @@ async function savedDirectly(state, name) {
   await clearReceived(state, `Saved to ${name}. The file arrived and was verified.`);
 }
 
+/**
+ * The file is saved: drop the temporary copy and say so. Never fails:
+ * the save already happened, and a copy that couldn't be removed now is
+ * removed by a later sweep.
+ */
 async function clearReceived(state, message) {
   if (downloadURL) { URL.revokeObjectURL(downloadURL); downloadURL = null; }
-  await storage.remove(state.id);
+  await storage.remove(state.id).catch((err) => console.warn("couldn't remove the temporary copy:", err));
   frag.scrub();
   setText("recv-cleared-text", message);
   show("recv-cleared");
