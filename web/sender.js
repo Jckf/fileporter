@@ -239,6 +239,9 @@ async function startSender(state, file) {
     try { await currentCtl?.cancel?.(); } catch {}
     endSend();
   };
+  // Before showing the screen, which focuses its first visible heading:
+  // not this one's, which is about to go.
+  $("send-invite").hidden = true; // until setupShare: there's no link yet
   show("send-active");
   ui.setStep("send-active", 1);
   setText("send-active-effective", state.m === "performance"
@@ -246,7 +249,6 @@ async function startSender(state, file) {
     : "You chose Private. The recipient won't see your IP address.");
   ui.fillFileCard($("send-active").querySelector(".file-card"), file);
   setText("send-active-status", engineReady ? "Starting…" : "Getting ready…");
-  $("send-invite").hidden = true; // until setupShare: there's no link yet
   const shown = ui.progressView("send-progress", "send-progress-text", file.size);
   // Reconnecting drops this session; the recipient redials.
   const stall = stallWatch("send", file.size, () => currentCtl?.stop?.());
