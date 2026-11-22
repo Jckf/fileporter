@@ -16,7 +16,7 @@ import * as storage from "./storage.js";
 import * as ui from "./ui.js";
 import { receiverSession, FatalError, CancelledError, NeedsRoomError, fmtBytes } from "./session.js";
 import {
-  $, show, announce, setText, sleep, setGuard, engineReady, engineError, ENGINE_FAILED, errText, pickedMode,
+  $, show, announce, setText, sleep, setGuard, engineReady, engineError, engineFailedText, errText, pickedMode,
   describeEffective, startSweeping, showCancelled, copyButton, relayName, stallWatch,
 } from "./shell.js";
 
@@ -167,6 +167,7 @@ async function receiverLoop(state) {
     try {
       conn = await engine.dial({ addr: state.a, derpMapURL: config.derpMapURL, clientKey: state.k, timeoutMs: DIAL_TIMEOUT_MS, verbose: config.verbose });
     } catch (err) {
+      if (engineError) throw err; // it won't come back: receiverFailed says so
       console.info("dial failed:", err.message);
       continue;
     }
@@ -257,7 +258,7 @@ function receiverFailed(err) {
   console.warn("receiving failed:", err);
   recvCtl = null;
   setGuard(false);
-  setText("recv-active-status", engineError ? ENGINE_FAILED : `Something went wrong: ${errText(err)}. Reload to try again.`);
+  setText("recv-active-status", engineError ? engineFailedText() : `Something went wrong: ${errText(err)}. Reload to try again.`);
   $("recv-retry").hidden = false;
 }
 

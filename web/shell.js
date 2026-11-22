@@ -64,9 +64,13 @@ window.addEventListener("beforeunload", (e) => {
 
 // --- Engine status -----------------------------------------------------------
 
+const ENGINE_FAILED = "Couldn't get ready. Check your connection, then reopen fileporter.";
+const ENGINE_STOPPED = "fileporter stopped working. Reopen it to carry on where you left off.";
+
 export let engineReady = false;
 export let engineError = null;
 const readyCallbacks = new Set();
+const failedCallbacks = new Set();
 engine.onProgress((s) => {
   const bar = $("engine-progress");
   const label = $("engine-label");
@@ -93,11 +97,15 @@ engine.onProgress((s) => {
       engineError = s.error;
       console.warn("engine failed:", s.error);
       label.textContent = ENGINE_FAILED;
+      failedCallbacks.forEach((fn) => fn());
       break;
   }
 });
-export const ENGINE_FAILED = "Couldn't get ready. Check your connection, then reopen fileporter.";
 export const whenReady = (fn) => (engineReady ? fn() : readyCallbacks.add(fn));
+/** Calls fn() if the engine fails, whether loading or later (it stopped). */
+export const whenFailed = (fn) => (engineError ? fn() : failedCallbacks.add(fn));
+/** What to tell the user once the engine has failed. */
+export const engineFailedText = () => (engineReady ? ENGINE_STOPPED : ENGINE_FAILED);
 
 // --- Shared helpers ----------------------------------------------------------
 

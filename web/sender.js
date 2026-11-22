@@ -16,7 +16,7 @@ import * as turn from "./turn.js";
 import * as ui from "./ui.js";
 import { senderSession, ChunkHashes, FatalError, CancelledError, fmtBytes } from "./session.js";
 import {
-  $, show, setText, setGuard, engineReady, ENGINE_FAILED, whenReady, errText, pickedMode, modeName,
+  $, show, setText, setGuard, engineReady, engineFailedText, whenReady, whenFailed, errText, pickedMode, modeName,
   describeEffective, showCancelled, copyButton, relayName, stallWatch,
 } from "./shell.js";
 
@@ -258,6 +258,13 @@ async function startSender(state, file) {
     },
   );
   if (sendCancelled) { listener.close(); return; }
+  // The engine stopping for good (it can't restart in this page): say so
+  // rather than keep waiting for a recipient who can't get through.
+  whenFailed(() => {
+    if (delivered || sendCancelled) return;
+    setGuard(false);
+    setText("send-active-status", engineFailedText());
+  });
   setupShare(frag.shareLink(state));
   setText("send-active-status", "Waiting for the recipient to open the link…");
 }
@@ -344,7 +351,7 @@ export async function senderResume(state) {
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     engine.ready.then(
       () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")),
-      () => setText("send-resume-error", ENGINE_FAILED),
+      () => setText("send-resume-error", engineFailedText()),
     );
     return true;
   };
