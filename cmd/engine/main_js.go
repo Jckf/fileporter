@@ -93,9 +93,9 @@ func tsNewSession(this js.Value, args []js.Value) any {
 	derpMapURL := optString(args[0], "derpMapURL")
 	// The relay region nearest the sender, measured by the page (here,
 	// in a browser, tailcat can only pick one at random); 0 if unknown.
-	regionID := 0
-	if v := args[0].Get("regionID"); v.Type() == js.TypeNumber {
-		regionID = v.Int()
+	regionID, err := optInt(args[0], "regionID", 0, math.MaxInt32, 0)
+	if err != nil {
+		return rejectedPromise(err)
 	}
 	return makePromise(func() (any, error) {
 		if derpMapURL == "" {
@@ -242,20 +242,16 @@ func tsDial(this js.Value, args []js.Value) any {
 	derpMapURL := optString(opts, "derpMapURL")
 	clientKey := optString(opts, "clientKey")
 	logf := optLogf(opts)
-	port := uint16(1)
-	if p := opts.Get("port"); p.Type() == js.TypeNumber {
-		// Checked as a float: Int would truncate 1.5, and uint16 wrap
-		// 65537. NaN != NaN, so NaN is rejected too.
-		f := p.Float()
-		if f < 1 || f > 65535 || f != math.Trunc(f) {
-			return rejectedPromise(errors.New("port must be an integer from 1 to 65535"))
-		}
-		port = uint16(f)
+	p, err := optInt(opts, "port", 1, 65535, 1)
+	if err != nil {
+		return rejectedPromise(err)
 	}
-	timeout := 60 * time.Second
-	if t := opts.Get("timeoutMs"); t.Type() == js.TypeNumber && t.Int() > 0 {
-		timeout = time.Duration(t.Int()) * time.Millisecond
+	port := uint16(p)
+	timeoutMs, err := optInt(opts, "timeoutMs", 1, 3_600_000, 60_000)
+	if err != nil {
+		return rejectedPromise(err)
 	}
+	timeout := time.Duration(timeoutMs) * time.Millisecond
 	return makePromise(func() (any, error) {
 		if addr == "" || clientKey == "" {
 			return nil, errors.New("addr and clientKey are required")
@@ -438,6 +434,21 @@ var (
 	})
 	closedClose = js.FuncOf(func(this js.Value, args []js.Value) any { return nil })
 )
+
+// optInt returns v[name] as a whole number from lo to hi, or def if
+// it isn't a number. Checked as a float: Value.Int would truncate 1.5,
+// and turns Infinity or 1e300 into anything. NaN fails the range check.
+func optInt(v js.Value, name string, lo, hi, def int) (int, error) {
+	p := v.Get(name)
+	if p.Type() != js.TypeNumber {
+		return def, nil
+	}
+	f := p.Float()
+	if !(f >= float64(lo) && f <= float64(hi)) || f != math.Trunc(f) {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", name, lo, hi)
+	}
+	return int(f), nil
+}
 
 func optString(v js.Value, name string) string {
 	if p := v.Get(name); p.Type() == js.TypeString {

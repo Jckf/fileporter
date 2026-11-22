@@ -56,6 +56,24 @@ func TestDialRejectsBadPort(t *testing.T) {
 	}
 }
 
+func TestDialRejectsBadTimeout(t *testing.T) {
+	for _, ms := range []any{0, -5, 1.5, js.Global().Get("Infinity"), 1e300} {
+		_, err := await(t, tsDial(js.Undefined(), opts(map[string]any{"addr": "x", "clientKey": "x", "timeoutMs": ms})))
+		if !strings.Contains(err, "timeoutMs must be") {
+			t.Errorf("timeoutMs %v: got %q, want a timeout error", ms, err)
+		}
+	}
+}
+
+func TestNewSessionRejectsBadRegion(t *testing.T) {
+	for _, id := range []any{-1, 1.5, js.Global().Get("NaN")} {
+		_, err := await(t, tsNewSession(js.Undefined(), opts(map[string]any{"derpMapURL": "x", "regionID": id})))
+		if !strings.Contains(err, "regionID must be") {
+			t.Errorf("regionID %v: got %q, want a region error", id, err)
+		}
+	}
+}
+
 func TestListenRejectsKeyWithoutRegion(t *testing.T) {
 	pk := tailcat.NewPrivateKey() // RegionID 0: Expand leaves Region empty
 	senderKey, _ := json.Marshal(pk)
