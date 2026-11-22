@@ -27,6 +27,11 @@ export async function save(file, { name, type }, onProgress = () => {}) {
   const started = await native.start({ name, type: type || "" });
   if (started.cancelled) return "cancelled";
   const { id } = started;
+  // A reload mid-save would otherwise leave the plugin's stream open and
+  // a partial file where the user chose to save. (Best effort: the page
+  // is going away.)
+  const abandon = () => { native.abort({ id }).catch(() => {}); };
+  addEventListener("pagehide", abandon);
   // Read the next chunk while the current one is being written.
   let next = file.size > 0 ? base64(file.slice(0, BRIDGE_CHUNK)) : null;
   try {
@@ -37,13 +42,15 @@ export async function save(file, { name, type }, onProgress = () => {}) {
       await native.write({ id, data });
       onProgress(Math.min(end, file.size) / file.size);
     }
+    const { saved } = await native.finish({ id });
+    return saved ? "done" : "cancelled";
   } catch (err) {
     next?.catch(() => {});
     await native.abort({ id }).catch(() => {});
     throw err;
+  } finally {
+    removeEventListener("pagehide", abandon);
   }
-  const { saved } = await native.finish({ id });
-  return saved ? "done" : "cancelled";
 }
 
 function base64(blob) {
