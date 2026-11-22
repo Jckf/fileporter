@@ -467,6 +467,29 @@ tests["turn-cancel-by-sender"] = async (p) => {
 };
 tests["turn-cancel-by-sender"].skipWhy = needsTurn;
 
+// Cancelling while the two sides are still connecting directly (the
+// sender is limited to a TURN server that never answers, so ICE can only
+// time out, after 8 s): the other side must hear it at once, not after.
+for (const who of ["sender", "receiver"]) {
+  tests[`cancel-while-connecting-by-${who}`] = async (p) => {
+    // (TEST-NET-1: never answers. Not loopback, which Firefox refuses at
+    // once, ending the attempt instead of leaving it connecting.)
+    await relayedSender(p, { urls: "turn:192.0.2.1:3478", username: "x", credential: "x" });
+    const { file } = mkFile(1 * MiB);
+    const link = await p.startSender(file, "performance");
+    await p.openReceiver(link, "performance", "performance");
+    await p.receiver.locator("#recv-active-status", { hasText: "Connecting" }).waitFor({ timeout: 30_000 });
+    await p.sender.locator("#send-active-status", { hasText: "Connecting" }).waitFor({ timeout: 30_000 });
+    const [mine, theirs, text] = who === "sender" ? [p.sender, p.receiver, "sender cancelled"] : [p.receiver, p.sender, "recipient cancelled"];
+    const t0 = Date.now();
+    await mine.click(who === "sender" ? "#send-cancel" : "#recv-cancel");
+    await theirs.locator("#cancelled", { hasText: text }).waitFor({ timeout: 30_000 });
+    const ms = Date.now() - t0;
+    if (ms > 6000) throw new Error(`the other side heard the cancel only after ${ms} ms (ICE timeout is 8 s)`);
+    return `heard in ${ms} ms`;
+  };
+  tests[`cancel-while-connecting-by-${who}`].skipWhy = ({ rtcWorks }) => (rtcWorks ? null : "WebRTC can't connect in this environment");
+}
 
 tests["save-picker"] = async (p) => {
   // Chromium's save path: showSaveFilePicker and a stream into the
@@ -742,6 +765,17 @@ tests["stall-reconnect"] = async (p) => {
 // connection in Chromium; elsewhere the transfer just carries on.
 tests["stall-reconnect"].browsers = ["chromium"];
 tests["stall-reconnect"].browsersWhy = "offline mode doesn't cut a worker's WebSocket here";
+
+tests["cancel-by-sender"] = async (p) => {
+  const { file } = mkFile(24 * MiB);
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(link, "privacy");
+  await p.waitRecvAtLeast(2 * MiB);
+  await p.sender.click("#send-cancel");
+  await p.sender.locator("#cancelled").waitFor();
+  await p.receiver.locator("#cancelled", { hasText: "sender cancelled" }).waitFor({ timeout: 30_000 });
+  await assertCleanedUp(p);
+};
 
 /** A file on disk, so re-picking it after a reload gives the same fingerprint. */
 async function fileOnDisk(p, size) {
