@@ -161,7 +161,9 @@ function sessionControl(ctl, link, current, cancelledText) {
     if (transport !== link) transport.send(msg).catch(() => {});
     try { await link.send(msg); } catch {}
     await link.finish();
-    if (transport !== link) transport.shutdown();
+    // Then everything: also a direct connection that came up meanwhile,
+    // and any still being set up.
+    stop();
   };
   const teardown = () => {
     ctl.stop = ctl.bye = ctl.cancel = null;
