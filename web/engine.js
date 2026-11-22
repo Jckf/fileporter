@@ -5,6 +5,8 @@
 // the engine download immediately in the background; nothing else on
 // the page depends on it until a session starts.
 
+import { config } from "./config.js";
+
 // Resolved against this module, not the page: the build puts all
 // assets in a versioned directory (see cmd/build).
 const worker = new Worker(new URL("engine-worker.js", import.meta.url));
@@ -71,6 +73,12 @@ function rpc(msg, transfer) {
     pending.set(id, { resolve, reject });
     worker.postMessage({ ...msg, id }, transfer || []);
   });
+}
+
+// Testing only (config.js ?engineexit=<ms>): the engine stops after
+// it was ready.
+if (config.simEngineExitMs) {
+  ready.then(() => setTimeout(() => fail(new Error("test: the engine stopped")), config.simEngineExitMs), () => {});
 }
 
 // Start the download as soon as the module is evaluated.

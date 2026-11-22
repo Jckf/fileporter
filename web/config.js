@@ -31,4 +31,7 @@ export const config = {
   // (holding it that long first), so the redial finds it complete.
   simDropAfterComplete: params.has("dropcomplete"),
   simDropAfterCompleteMs: Number(params.get("dropcomplete")) || 0,
+  // Testing only: ?engineexit=<ms> fails the engine that long after it's
+  // ready, as if it had stopped.
+  simEngineExitMs: Number(params.get("engineexit")) || 0,
 };

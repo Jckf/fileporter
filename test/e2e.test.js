@@ -840,6 +840,26 @@ for (const where of ["middle", "end"]) {
   };
 }
 
+// The engine failing after it was ready (?engineexit, config.js): both
+// sides must say fileporter stopped, not wait or redial for good.
+tests["engine-stopped"] = async (p) => {
+  const { path: file } = await fileOnDisk(p, 64 * MiB);
+  // Sender: stops while waiting for the recipient.
+  const s = p.sender;
+  await s.goto(BASE + "?engineexit=6000", NAV);
+  await s.setInputFiles("#send-file", file);
+  await s.check('input[name="send-mode"][value="privacy"]');
+  await s.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+  await s.click("#send-start");
+  await linkOf(s);
+  await s.locator("#send-active-status", { hasText: "stopped working" }).waitFor({ timeout: 30_000 });
+  // Receiver: stops mid-transfer, from a sender that keeps going.
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(withQuery(link, "engineexit=4000"), "privacy");
+  await p.receiver.locator("#recv-active-status", { hasText: "stopped working" }).waitFor({ timeout: 60_000 });
+  await p.receiver.locator("#recv-retry:visible").waitFor();
+};
+
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);
