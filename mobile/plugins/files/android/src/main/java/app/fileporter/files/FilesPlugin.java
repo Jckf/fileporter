@@ -90,13 +90,13 @@ public class FilesPlugin extends Plugin {
                 }
             }
         );
-        handleShare(getActivity().getIntent());
+        handleShare(getActivity().getIntent(), false);
     }
 
     @Override
     protected void handleOnNewIntent(Intent intent) {
         super.handleOnNewIntent(intent);
-        if (handleShare(intent)) notifyListeners("shared", new JSObject());
+        handleShare(intent, true);
     }
 
     // --- Picking ---------------------------------------------------------
@@ -120,21 +120,25 @@ public class FilesPlugin extends Plugin {
             call.resolve(ret);
             return;
         }
-        ContentResolver resolver = getContext().getContentResolver();
-        boolean persistent = true;
-        try {
-            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (SecurityException e) {
-            persistent = false; // readable for now, not after a restart
-            granted.add(uri.toString());
-        }
-        try {
-            JSObject ret = new JSObject();
-            ret.put("file", describe(uri, persistent));
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("Couldn't read that file: " + e.getMessage(), e);
-        }
+        // Off the main thread: describing it is content-provider IPC, which
+        // a cloud provider may take seconds over.
+        getBridge().execute(() -> {
+            ContentResolver resolver = getContext().getContentResolver();
+            boolean persistent = true;
+            try {
+                resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException e) {
+                persistent = false; // readable for now, not after a restart
+                granted.add(uri.toString());
+            }
+            try {
+                JSObject ret = new JSObject();
+                ret.put("file", describe(uri, persistent));
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Couldn't read that file: " + e.getMessage(), e);
+            }
+        });
     }
 
     @PluginMethod
@@ -176,12 +180,18 @@ public class FilesPlugin extends Plugin {
         call.resolve(s != null ? s : new JSObject());
     }
 
-    /** Records a share intent; true if it was one. */
+    /**
+     * Records a share intent, if it is one, then tells the page when
+     * notify. Describing the file is content-provider IPC, which a cloud
+     * provider may take seconds over, so that runs off the main thread,
+     * on the one plugin calls run on: a takeShared() the page calls
+     * after this (or after the "shared" event) comes after it.
+     */
     @SuppressWarnings("deprecation") // getParcelableExtra(String): the typed one needs API 33
-    private boolean handleShare(Intent intent) {
-        if (intent == null) return false;
+    private void handleShare(Intent intent, boolean notify) {
+        if (intent == null) return;
         String action = intent.getAction();
-        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return false;
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return;
         // Handled: a recreated activity mustn't share it again.
         intent.setAction(null);
 
@@ -193,28 +203,30 @@ public class FilesPlugin extends Plugin {
             ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
             if (list != null) uris.addAll(list);
         }
+        CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
 
-        JSObject s = new JSObject();
-        if (uris.size() > 1) {
-            s.put("error", "many");
-        } else if (uris.size() == 1) {
-            Uri uri = uris.get(0);
-            granted.add(uri.toString());
-            try {
-                s.put("file", describe(uri, false));
-            } catch (Exception e) {
-                Log.w(TAG, "can't read shared " + uri, e);
-                s.put("error", "unreadable");
+        getBridge().execute(() -> {
+            JSObject s = new JSObject();
+            if (uris.size() > 1) {
+                s.put("error", "many");
+            } else if (uris.size() == 1) {
+                Uri uri = uris.get(0);
+                granted.add(uri.toString());
+                try {
+                    s.put("file", describe(uri, false));
+                } catch (Exception e) {
+                    Log.w(TAG, "can't read shared " + uri, e);
+                    s.put("error", "unreadable");
+                }
+            } else {
+                // Shared text: a fileporter link opens; anything else isn't a file.
+                Matcher m = LINK.matcher(text != null ? text : "");
+                if (m.find()) s.put("link", m.group(1));
+                else s.put("error", "notfile");
             }
-        } else {
-            // Shared text: a fileporter link opens; anything else isn't a file.
-            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
-            Matcher m = LINK.matcher(text != null ? text : "");
-            if (m.find()) s.put("link", m.group(1));
-            else s.put("error", "notfile");
-        }
-        shared = s;
-        return true;
+            shared = s;
+            if (notify) notifyListeners("shared", new JSObject());
+        });
     }
 
     // --- Reading -------------------------------------------------------------

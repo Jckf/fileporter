@@ -71,16 +71,20 @@ public class SaveFilePlugin extends Plugin {
             call.resolve(ret);
             return;
         }
-        try {
-            String id = UUID.randomUUID().toString();
-            open.put(id, new Target(uri, new BufferedOutputStream(openOutput(uri), 1 << 20)));
-            JSObject ret = new JSObject();
-            ret.put("id", id);
-            call.resolve(ret);
-        } catch (Exception e) {
-            delete(uri);
-            call.reject("Couldn't open the file: " + e.getMessage(), e);
-        }
+        // Off the main thread: opening it is content-provider IPC, which a
+        // cloud provider may take seconds over.
+        getBridge().execute(() -> {
+            try {
+                String id = UUID.randomUUID().toString();
+                open.put(id, new Target(uri, new BufferedOutputStream(openOutput(uri), 1 << 20)));
+                JSObject ret = new JSObject();
+                ret.put("id", id);
+                call.resolve(ret);
+            } catch (Exception e) {
+                delete(uri);
+                call.reject("Couldn't open the file: " + e.getMessage(), e);
+            }
+        });
     }
 
     private OutputStream openOutput(Uri uri) throws IOException {
