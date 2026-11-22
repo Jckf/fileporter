@@ -284,6 +284,19 @@ public class FilesPlugin extends Plugin {
             synchronized (this) {
                 if (!seekable) {
                     pipe = true;
+                    // Its stream serves the first range: opening again is
+                    // the same provider call, which a slow provider may
+                    // take seconds over (and one that makes the file as it
+                    // goes would start over).
+                    if (f != null && idle == null && !dropped) {
+                        try {
+                            idle = f.createInputStream();
+                            idleAt = 0;
+                            f = null;
+                        } catch (IOException e) {
+                            // stream() opens it again
+                        }
+                    }
                 } else if (file == null && !dropped) {
                     file = f;
                     f = null;
@@ -293,7 +306,7 @@ public class FilesPlugin extends Plugin {
                     got = file;
                 }
             }
-            closeQuietly(f); // a pipe, or another range got there first
+            closeQuietly(f); // another range got there first, or a pipe not kept
             if (got == null && seekable) throw new IOException("let go of");
             return got;
         }

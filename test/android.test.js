@@ -289,8 +289,9 @@ tests["send-pipe"] = async ({ desktop, device, shell, appPage }) => {
   } finally {
     await r.close();
   }
-  // Once to tell it's a pipe, then once per stream: a few, not one for
-  // each of the file's 1 MiB ranges.
+  // Once to tell it's a pipe, whose stream then serves from the start,
+  // and again after the reload sent the sender back: at least two, and a
+  // few at most, not one for each of the file's 1 MiB ranges.
   const opens = (await shell("logcat -d -s PipeProvider:I")).split("\n").filter((l) => l.includes(` open ${name}`)).length;
   if (opens < 2 || opens > SIZE / MiB / 4) throw new Error(`opened ${opens} times`);
   return `${SIZE / MiB} MiB streamed across a receiver reload (opened ${opens} times), hash OK`;
