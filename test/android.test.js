@@ -17,6 +17,8 @@
 //   send-pipe     the app sends a file shared from a provider that can
 //                 only stream it (the debug build's PipeProvider); the
 //                 receiver reloads halfway, so the sender goes back
+//   send-part     likewise, a file shared as part of a bigger one (the
+//                 debug build's PartProvider: an offset and a length)
 //
 // Needs Docker, /dev/kvm and internet (tailcat's public DERP relays).
 // Build the APK first (mobile/run mobile/build android), then:
@@ -294,6 +296,45 @@ tests["send-pipe"] = async ({ desktop, device, shell, appPage }) => {
   const opens = (await shell("logcat -d -s PipeProvider:I")).split("\n").filter((l) => l.includes(` open ${name}`)).length;
   if (opens < 2 || opens > SIZE / MiB / 4) throw new Error(`opened ${opens} times`);
   return `${SIZE / MiB} MiB streamed across a receiver reload (opened ${opens} times), hash OK`;
+};
+
+// A file the provider hands out as part of a bigger one (the debug
+// build's PartProvider: an offset into the file, and a length), as one
+// entry of an archive is: the plugin must read from that offset and no
+// further than that length. Random bytes before and after it, so
+// reading from the file's start or past the part's end shows in the
+// hash. The receiver reloads halfway, so ranges are read again from
+// further in.
+tests["send-part"] = async ({ desktop, device, shell, appPage }) => {
+  const buffer = randomBytes(SIZE);
+  const name = `part-${Date.now()}.bin`;
+  // Not page-aligned, nor a multiple of anything the plugin reads in.
+  const before = randomBytes(12_345), after = randomBytes(6_789);
+  // Into the app's files/part/, which PartProvider serves.
+  await device.push(Buffer.concat([before, buffer, after]), `/data/local/tmp/${name}`);
+  // (Checked: run straight after the emulator boots, run-as can fail.)
+  let out = "";
+  await waitUntil(async () => {
+    out = await shell(`run-as app.fileporter sh -c 'mkdir -p files/part && rm -f files/part/* && cp /data/local/tmp/${name} files/part/ && wc -c < files/part/${name}' 2>&1`);
+    return out.trim() === String(before.length + buffer.length + after.length);
+  }, 30_000, "couldn't copy the file into the app", 2_000).catch((err) => { throw new Error(`${err.message}: ${out.trim()}`); });
+  await shell(`rm /data/local/tmp/${name}`);
+  await shell("am force-stop app.fileporter");
+  const uri = `content://app.fileporter.part/${before.length}/${buffer.length}/${name}`;
+  await shell(`am start -W -a android.intent.action.SEND -t application/octet-stream --eu android.intent.extra.STREAM ${uri} -n app.fileporter/.MainActivity`);
+  const page = await appPage();
+  await page.locator("#send-file-card:visible").waitFor({ timeout: 30_000 });
+  const shown = await page.textContent("#send-file-card .file-name");
+  if (shown !== name) throw new Error(`file card shows ${shown}`);
+  await page.check('input[name="send-mode"][value="privacy"]');
+  await page.locator("#send-start:enabled").waitFor({ timeout: 120_000 });
+  await page.click("#send-start");
+  const link = await linkOf(page);
+  await receiveAcross(desktop, link, buffer, "receiver reload", async (r) => {
+    await r.reload();
+    return page;
+  });
+  return `${SIZE / MiB} MiB at offset ${before.length} of a bigger file sent across a receiver reload, hash OK`;
 };
 
 async function main() {

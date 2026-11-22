@@ -9,5 +9,11 @@
             android:name=".PipeProvider"
             android:authorities="${applicationId}.pipe"
             android:exported="false" />
+        <!-- Likewise: part of a file (an offset into it, a length), as
+             a provider serving one entry of an archive hands it out. -->
+        <provider
+            android:name=".PartProvider"
+            android:authorities="${applicationId}.part"
+            android:exported="false" />
     </application>
 </manifest>
