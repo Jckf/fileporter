@@ -29,8 +29,9 @@ export async function save(file, { name, type }, onProgress = () => {}) {
   const { id } = started;
   // A reload mid-save would otherwise leave the plugin's stream open and
   // a partial file where the user chose to save. (Best effort: the page
-  // is going away.)
-  const abandon = () => { native.abort({ id }).catch(() => {}); };
+  // is going away. Not when it's only kept in the back/forward cache:
+  // it may come back and carry on.)
+  const abandon = (e) => { if (!e.persisted) native.abort({ id }).catch(() => {}); };
   addEventListener("pagehide", abandon);
   // Read the next chunk while the current one is being written.
   let next = file.size > 0 ? base64(file.slice(0, BRIDGE_CHUNK)) : null;
