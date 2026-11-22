@@ -860,6 +860,29 @@ tests["engine-stopped"] = async (p) => {
   await p.receiver.locator("#recv-retry:visible").waitFor();
 };
 
+// Resuming a send whose start fails (here: the lock throws once, as
+// where navigator.locks is missing) must say so, and choosing the same
+// file again must try again, in a browser too.
+tests["resume-retry"] = async (p) => {
+  const { path, hash } = await fileOnDisk(p, 3 * MiB + 1);
+  const link = await p.startSender(path, "privacy");
+  await p.sender.addInitScript(() => {
+    const request = LockManager.prototype.request;
+    let failed = false;
+    LockManager.prototype.request = function (...a) {
+      if (!failed) { failed = true; throw new Error("test: no locks"); }
+      return request.apply(this, a);
+    };
+  });
+  await p.sender.reload(NAV);
+  await p.sender.locator("#send-resume").waitFor();
+  await p.sender.setInputFiles("#send-resume-file", path);
+  await p.sender.locator("#send-resume-error", { hasText: "Couldn't carry on sending" }).waitFor({ timeout: 30_000 });
+  await p.sender.setInputFiles("#send-resume-file", path);
+  await p.openReceiver(link, "privacy");
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch after retrying");
+};
+
 tests["resume-sender-cancel"] = async (p) => {
   // Reopened without the file: cancelling there forgets the transfer.
   const { file } = mkFile(1 * MiB);
