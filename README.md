@@ -57,6 +57,20 @@ See the comment at the top of `web/session.js`.
     cd test && npm install && npx playwright install
     node e2e.test.js chromium firefox webkit
 
+Linting needs only Docker; each linter runs from a pinned image:
+
+    ./lint          # Go, JavaScript, CSS, the CI workflow (as CI runs it)
+    ./lint all      # also Android Lint and SwiftLint (slow)
+    ./lint fix      # let gofmt, ESLint and Stylelint fix what they can
+
+The rules are each tool's standard set: golangci-lint's standard
+linters and gofmt (`.golangci.yml`), ESLint's recommended
+(`eslint.config.mjs`), `stylelint-config-standard` (`.stylelintrc.json`,
+which keeps the `-webkit-` prefixes Safari still needs and the
+`max-width` media query syntax older Safari understands), actionlint
+with ShellCheck, and Android Lint's and SwiftLint's defaults
+(`.swiftlint.yml`, which leaves Capacitor's iOS template alone).
+
 Every test runs in a normal and an incognito (private browsing) session;
 `--session=normal` or `--session=incognito` picks one. Firefox's and
 WebKit's private modes refuse the storage a receiver needs: there the

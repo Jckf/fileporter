@@ -19,6 +19,7 @@
 "use strict";
 
 importScripts("wasm_exec.js");
+/* global Go -- defined by wasm_exec.js */
 
 const conns = new Map();     // connId → Go conn object
 const listeners = new Map(); // listenerId → Go listener object

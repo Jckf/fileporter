@@ -76,7 +76,7 @@ const parseBytes = (t) => {
 
 const tests = {};
 
-tests["receive-save"] = async ({ desktop, device, shell, find, tap, appPage }) => {
+tests["receive-save"] = async ({ desktop, shell, find, tap, appPage }) => {
   const buffer = randomBytes(SIZE);
   // Unique: the Save dialog renames a file that already exists.
   const name = `payload-${Date.now()}.bin`;

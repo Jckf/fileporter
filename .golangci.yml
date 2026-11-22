@@ -1,0 +1,17 @@
+# golangci-lint v2: its standard linters (errcheck, govet, ineffassign,
+# staticcheck, unused) and gofmt. cmd/engine builds only for js/wasm,
+# so it's linted in a second pass with GOOS=js GOARCH=wasm (see lint).
+version: "2"
+linters:
+  default: standard
+  # The usual exclusions (golangci-lint's former defaults): unchecked
+  # Close/Remove/Fprint and the like, which are idiomatic.
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+formatters:
+  enable:
+    - gofmt

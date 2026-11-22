@@ -179,7 +179,7 @@ func tsListen(this js.Value, args []js.Value) any {
 		defer cancel()
 		ci := pk.Public
 		if err := ci.Expand(ctx, tailcat.ExpandForServer, tailcat.DERPMapURL(derpMapURL)); err != nil {
-			return nil, fmt.Errorf("Expand: %w", err)
+			return nil, fmt.Errorf("expand: %w", err)
 		}
 
 		srv := &tailcat.Server{

@@ -38,7 +38,8 @@ public class FilesPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     override public func load() {
-        NotificationCenter.default.addObserver(self, selector: #selector(openedURL(_:)), name: .capacitorOpenURL, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(openedURL(_:)), name: .capacitorOpenURL, object: nil)
     }
 
     // MARK: Files kept for sending
@@ -66,9 +67,9 @@ public class FilesPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func takeShared(_ call: CAPPluginCall) {
         DispatchQueue.main.async { [weak self] in
-            let s = self?.shared ?? [:]
+            let taken = self?.shared ?? [:]
             self?.shared = nil
-            call.resolve(s)
+            call.resolve(taken)
         }
     }
 

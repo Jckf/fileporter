@@ -1,0 +1,82 @@
+#!/bin/sh
+# Copyright (c) 2026 Jim C K Flaten
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Runs the linters, each from a pinned Docker image, so Docker is all
+# it needs. Exits non-zero if any of them finds something.
+#
+#   ./lint        Go, JavaScript, CSS and the GitHub Actions workflow (what CI runs)
+#   ./lint all    also Android Lint and SwiftLint (slow: the Android build
+#                 container, see mobile/run, and a large SwiftLint image)
+#   ./lint fix    lets gofmt, ESLint and Stylelint fix what they can
+#
+# Rules: golangci-lint's standard linters and gofmt (.golangci.yml),
+# ESLint's recommended (eslint.config.mjs), stylelint-config-standard
+# (.stylelintrc.json), actionlint (with ShellCheck on run: steps),
+# Android Lint's defaults and SwiftLint's (.swiftlint.yml).
+set -u
+cd "$(dirname "$0")"
+mode=${1:-}
+
+GOLANGCI=golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481
+NODE=node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
+ACTIONLINT=rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+SWIFTLINT=ghcr.io/realm/swiftlint:0.65.1@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/fileporter-lint"
+mkdir -p "$cache/go" "$cache/npm"
+user="$(id -u):$(id -g)"
+status=0
+step() { echo "== $1" >&2; }
+check() { "$@" || status=1; }
+
+# go_lint <GOOS> <GOARCH> <golangci-lint args…>
+go_lint() {
+  goos=$1 goarch=$2
+  shift 2
+  docker run --rm -u "$user" -e HOME=/tmp -e GOPATH=/cache/go -e GOCACHE=/cache/go/build \
+    -e GOLANGCI_LINT_CACHE=/cache/go/lint -e GOOS="$goos" -e GOARCH="$goarch" \
+    -v "$cache/go:/cache/go" -v "$PWD:/src" -w /src "$GOLANGCI" golangci-lint "$@"
+}
+node_run() {
+  docker run --rm -u "$user" -e HOME=/tmp -e npm_config_cache=/cache/npm -e npm_config_update_notifier=false \
+    -v "$cache/npm:/cache/npm" -v "$PWD:/src" -w /src "$NODE" "$@"
+}
+# The linters' own dependencies (package.json), when missing or stale.
+node_deps() {
+  [ node_modules/.package-lock.json -nt package-lock.json ] || node_run npm ci --no-audit --no-fund --silent
+}
+
+if [ "$mode" = fix ]; then
+  step "gofmt"; check go_lint linux amd64 fmt
+  node_deps
+  step "eslint --fix"; check node_run npx eslint --fix .
+  step "stylelint --fix"; check node_run npx stylelint --fix "web/**/*.css"
+  exit $status
+fi
+
+step "golangci-lint"
+check go_lint linux amd64 run ./...
+# cmd/engine builds only for js/wasm.
+step "golangci-lint (js/wasm)"
+check go_lint js wasm run ./cmd/engine/...
+
+node_deps
+step "eslint"
+check node_run npx eslint .
+step "stylelint"
+check node_run npx stylelint "web/**/*.css"
+
+step "actionlint"
+check docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT"
+
+if [ "$mode" = all ]; then
+  # Android Lint fails on errors; warnings are in each module's
+  # build/reports/lint-results-debug.html.
+  step "Android Lint"
+  check mobile/run sh -c 'cd mobile/android && ./gradlew -q lint'
+  step "swiftlint"
+  check docker run --rm -v "$PWD:/src" -w /src "$SWIFTLINT" swiftlint lint --quiet
+fi
+
+exit $status

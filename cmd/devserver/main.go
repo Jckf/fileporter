@@ -21,7 +21,9 @@ import (
 
 func main() {
 	// As GitHub Pages serves it; Go doesn't know the extension.
-	mime.AddExtensionType(".webmanifest", "application/manifest+json")
+	if err := mime.AddExtensionType(".webmanifest", "application/manifest+json"); err != nil {
+		log.Fatal(err)
+	}
 	addr := flag.String("addr", "localhost:8080", "listen address")
 	dir := flag.String("dir", "dist", "directory to serve")
 	flag.Parse()

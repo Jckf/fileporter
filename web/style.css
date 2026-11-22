@@ -6,7 +6,7 @@
 
 :root {
   --bg: #f6f7f9;
-  --surface: #ffffff;
+  --surface: #fff;
   --surface-2: #f1f3f6;
   --border: #e2e6eb;
   --border-strong: #c9d0d8;
@@ -14,19 +14,21 @@
   --muted: #5b6570;
   --accent: #0b7a69;
   --accent-hover: #09685a;
-  --accent-fg: #ffffff;
+  --accent-fg: #fff;
   --accent-soft: #e2f3ef;
   --ok: #0b7a69;
   --warn: #9a5b00;
   --warn-soft: #fdf3e2;
   --error: #b42318;
   --focus: #0b7a69;
-  --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 4px 16px rgb(16 24 40 / 0.06);
+  --shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 4px 16px rgb(16 24 40 / 6%);
   --radius: 14px;
   --radius-sm: 10px;
   --dots-opacity: 0.055;
+
   color-scheme: light dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0e1114;
@@ -45,13 +47,14 @@
     --warn-soft: #2f2412;
     --error: #ff8a80;
     --focus: #43c6ad;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 25%);
     --dots-opacity: 0.077;
   }
 }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -62,9 +65,10 @@ body {
   font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 .sprite { display: none; }
+
 .visually-hidden {
   position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 [hidden] { display: none !important; }
 
@@ -94,6 +98,7 @@ body {
     mask-composite: intersect;
   }
 }
+
 @media print, (forced-colors: active) {
   body::before { display: none; }
 }
@@ -114,9 +119,11 @@ html::before, html::after {
 html::before { top: 0; background: linear-gradient(var(--bg), transparent); }
 html::after { bottom: 0; background: linear-gradient(transparent, var(--bg)); }
 html.fade-top::before, html.fade-bottom::after { opacity: 1; }
+
 @media print, (forced-colors: active) {
   html::before, html::after { display: none; }
 }
+
 @media (prefers-reduced-motion: reduce) {
   html::before, html::after { transition: none; }
 }
@@ -137,6 +144,7 @@ footer.site a { color: inherit; }
 .hero { margin: 32px 0 20px; }
 .hero h1 { font-size: clamp(1.6rem, 5vw, 2.1rem); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 8px; text-wrap: balance; }
 .lede { margin: 0; color: var(--muted); font-size: 1.05rem; }
+
 /* Short facts separated by dots, wrapping whole facts. Every fact
    starts with its dot; the list is shifted left by one dot's width and
    that strip is clipped, which hides the dot of whichever fact starts a
@@ -155,6 +163,7 @@ footer.site a { color: inherit; }
 }
 .hero + .card { margin-top: 0; }
 .card.center { text-align: center; }
+
 @media (max-width: 420px) { .card { padding: 18px 16px; } }
 
 h2 { font-size: 1.25rem; margin: 0 0 8px; letter-spacing: -0.01em; }
@@ -162,6 +171,7 @@ h2 { font-size: 1.25rem; margin: 0 0 8px; letter-spacing: -0.01em; }
 p { margin: 0 0 12px; }
 .muted { color: var(--muted); }
 .small { font-size: 0.875rem; }
+
 .offline {
   display: flex; align-items: center; gap: 10px;
   width: calc(100% - 32px); max-width: calc(36rem - 32px); margin: 8px auto 16px;
@@ -175,7 +185,7 @@ p { margin: 0 0 12px; }
 
 .error { color: var(--error); font-size: 0.9rem; margin: 8px 0 0; }
 .error:empty { display: none; }
-.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.icon { width: 20px; height: 20px; fill: none; stroke: currentcolor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .icon-lg { width: 28px; height: 28px; }
 .icon-xl { width: 44px; height: 44px; }
 
@@ -217,6 +227,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* --- File picking ---------------------------------------------------------------- */
 
 .dropzone { position: relative; }
+
 .dropzone-label {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 32px 16px; text-align: center; cursor: pointer;
@@ -230,6 +241,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .dropzone-label:hover, .dropzone.over .dropzone-label { border-color: var(--accent); background: var(--accent-soft); }
 .dropzone input:focus-visible + .dropzone-label { outline: 2px solid var(--focus); outline-offset: 2px; }
 .link-like { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
 /* Touch screens have nothing to drag files from. */
 @media (pointer: coarse) { .drop-hint { display: none; } }
 
@@ -240,6 +252,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .file-card.static { margin-bottom: 4px; }
 .file-icon { position: relative; width: 40px; height: 44px; display: grid; place-items: center; color: var(--accent); flex: none; }
 .file-icon .icon { width: 40px; height: 44px; stroke-width: 1.4; }
+
 .file-ext {
   position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%);
   font-size: 0.56rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
@@ -263,15 +276,18 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 #scanner { position: fixed; inset: 0; z-index: 20; background: #000; color: #fff; }
 #scanner[hidden] { display: none; }
 #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
 #scanner .scanner-frame {
   position: absolute; left: 50%; top: 45%; width: min(70vw, 60vh, 320px); aspect-ratio: 1;
   transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 16px;
-  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.45);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 45%);
 }
+
 #scanner p {
   position: absolute; left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); margin: 0;
-  text-align: center; font-weight: 600; text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+  text-align: center; font-weight: 600; text-shadow: 0 1px 3px rgb(0 0 0 / 80%);
 }
+
 #scanner button {
   position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
 }
@@ -281,17 +297,21 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 fieldset.modes { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
 fieldset.modes legend { font-weight: 600; margin-bottom: 10px; padding: 0; }
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
 @media (max-width: 460px) { .mode-grid { grid-template-columns: 1fr; } }
+
 label.mode {
   position: relative; display: flex; gap: 12px; align-items: flex-start;
   padding: 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface); cursor: pointer; transition: border-color .15s, background-color .15s;
 }
 label.mode:hover { border-color: var(--border-strong); }
+
 /* The real radio covers the whole card, invisibly: every click and tap hits it. */
 label.mode input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
 label.mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 label.mode:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+
 .mode-icon {
   display: grid; place-items: center; width: 36px; height: 36px; flex: none;
   border-radius: 10px; background: var(--surface-2); color: var(--accent);
@@ -314,6 +334,7 @@ details.explain p { margin: 8px 0 0; }
 .link-row { display: flex; gap: 8px; }
 .turn-form label { display: block; margin-top: 10px; color: var(--fg); }
 .turn-form input { display: block; width: 100%; margin-top: 4px; }
+
 .link-row input, .turn-form input {
   flex: 1; min-width: 0; font: inherit; font-size: 0.9rem; padding: 10px 12px;
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--fg);
@@ -322,8 +343,9 @@ details.explain p { margin: 8px 0 0; }
 #copy-link.copied, #unsupported-copy.copied { background: var(--ok); }
 .link-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 #qr-panel { margin-top: 14px; text-align: center; }
-.qr { display: inline-block; background: #ffffff; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); line-height: 0; }
+.qr { display: inline-block; background: #fff; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); line-height: 0; }
 .qr svg { width: min(232px, 60vw); height: auto; }
+
 .note {
   display: flex; gap: 8px; align-items: flex-start; margin: 16px 0 0; padding: 10px 12px;
   font-size: 0.85rem; color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm);
@@ -333,6 +355,7 @@ details.explain p { margin: 8px 0 0; }
 /* --- Transfer --------------------------------------------------------------------- */
 
 .transfer { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+
 /* Shown when no data has moved for a while (app.js, stallWatch). */
 .stall {
   margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-sm);
@@ -341,11 +364,13 @@ details.explain p { margin: 8px 0 0; }
 .stall p { margin: 0 0 10px; }
 .stall p.muted { margin: 10px 0 0; color: var(--muted); }
 .stall code { font-size: 0.8rem; overflow-wrap: anywhere; user-select: all; }
+
 /* Asking where to save a file too big for the browser's storage. */
 .pick { margin: 12px 0; padding: 14px; border-radius: var(--radius-sm); background: var(--accent-soft); }
 .pick p { margin: 0 0 12px; }
 .transfer-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; min-height: 28px; }
 .status { font-weight: 500; }
+
 .badge {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
   font-size: 0.78rem; font-weight: 600; background: var(--accent-soft); color: var(--accent);
@@ -358,13 +383,16 @@ details.explain p { margin: 8px 0 0; }
 .bar progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; transition: width .3s; }
 .bar progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 #send-progress-text, #recv-progress-text { margin-top: 8px; font-variant-numeric: tabular-nums; }
+
 /* Before the transfer starts there is nothing to measure: no empty bar. */
 .transfer[data-phase="waiting"] .bar,
 .transfer[data-phase="waiting"] [id$="-progress-text"] { display: none; }
+
 .transfer[data-phase="waiting"] .status::before {
   content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%;
   background: var(--accent); vertical-align: middle; animation: pulse 1.6s ease-in-out infinite;
 }
+
 @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
 /* --- Result screens ----------------------------------------------------------------- */

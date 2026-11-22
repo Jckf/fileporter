@@ -99,7 +99,7 @@ public class SaveFilePlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelega
             return
         }
         DispatchQueue.main.async { [weak self] in
-            guard let self, let vc = self.bridge?.viewController, self.exporting == nil else {
+            guard let self, let viewController = self.bridge?.viewController, self.exporting == nil else {
                 try? FileManager.default.removeItem(at: target.dir)
                 call.reject("Can't show the save dialog now")
                 return
@@ -107,7 +107,7 @@ public class SaveFilePlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelega
             let picker = UIDocumentPickerViewController(forExporting: [target.file], asCopy: true)
             picker.delegate = self
             self.exporting = (call, target.dir)
-            vc.present(picker, animated: true)
+            viewController.present(picker, animated: true)
         }
     }
 

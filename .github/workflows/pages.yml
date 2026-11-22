@@ -1,6 +1,7 @@
 # Builds the site (Go → js/wasm engine + static files), runs the e2e
-# suite against that exact build in Chromium, Firefox and WebKit, and
-# only if everything passes publishes it to GitHub Pages. Runs on every
+# suite against that exact build in Chromium, Firefox and WebKit, lints
+# the code (./lint), and only if everything passes publishes it to
+# GitHub Pages. Runs on every
 # push to main that touches more than Markdown.
 #
 # The tests use tailcat's public DERP relays (rate-limited), so a run
@@ -62,6 +63,18 @@ jobs:
         with:
           path: dist
 
+  # Go, JavaScript, CSS and this workflow, each linter from its pinned
+  # Docker image (see lint). Android Lint and SwiftLint (./lint all) are
+  # left to local runs: they need the Android build image and a large
+  # SwiftLint one.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint
+        run: ./lint
+
   test:
     needs: build
     runs-on: ubuntu-latest
@@ -90,7 +103,7 @@ jobs:
           server="$RUNNER_TEMP/artifacts/devserver/devserver"
           chmod +x "$server"
           "$server" -dir dist &
-          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:8080/ && exit 0; sleep 1; done
+          for _ in $(seq 1 30); do curl -sf -o /dev/null http://localhost:8080/ && exit 0; sleep 1; done
           echo "dev server didn't start" >&2; exit 1
       # The runner's preinstalled Node runs Playwright fine; its only
       # dependency is playwright itself, so npm ci is quick uncached.
@@ -125,7 +138,7 @@ jobs:
         run: node e2e.test.js --session=${{ matrix.session }} ${{ matrix.browser }}
 
   deploy:
-    needs: [build, test]
+    needs: [build, test, lint]
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -33,9 +33,9 @@ export async function scanLink() {
       audio: false,
     });
   } catch (err) {
-    if (err?.name === "NotAllowedError") throw new Error("fileporter isn't allowed to use the camera. Allow it in your device's settings, then try again.");
-    if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") throw new Error("No camera found.");
-    throw new Error(`Couldn't start the camera: ${err?.message || err}`);
+    if (err?.name === "NotAllowedError") throw new Error("fileporter isn't allowed to use the camera. Allow it in your device's settings, then try again.", { cause: err });
+    if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") throw new Error("No camera found.", { cause: err });
+    throw new Error(`Couldn't start the camera: ${err?.message || err}`, { cause: err });
   }
 
   const overlay = $("scanner");
