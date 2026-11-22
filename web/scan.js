@@ -51,7 +51,9 @@ async function scan() {
   const video = $("scanner-video");
   const status = $("scanner-status");
   status.textContent = "Point the camera at the QR code on the sender's screen.";
+  const opener = document.activeElement;
   overlay.hidden = false;
+  $("scanner-close").focus();
   video.srcObject = stream;
 
   const canvas = document.createElement("canvas");
@@ -98,5 +100,6 @@ async function scan() {
     for (const t of stream.getTracks()) t.stop();
     video.srcObject = null;
     overlay.hidden = true;
+    opener?.focus?.();
   }
 }

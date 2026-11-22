@@ -26,10 +26,32 @@ import "./edgefade.js";
 import * as relay from "./relay.js";
 
 const $ = (id) => document.getElementById(id);
+let screens = 0;
+/**
+ * Shows one screen. After the first, focus moves to its heading (or,
+ * without a visible one, its status line), so keyboard and screen
+ * reader users land on the new screen instead of a button it hid.
+ */
 const show = (id) => {
-  for (const s of document.querySelectorAll("main > section")) s.hidden = s.id !== id;
+  let section = null;
+  for (const s of document.querySelectorAll("main > section")) {
+    s.hidden = s.id !== id;
+    if (!s.hidden) section = s;
+  }
   window.scrollTo(0, 0);
+  if (screens++ === 0 || !section) return;
+  const target = [...section.querySelectorAll("h1, h2")].find((h) => h.offsetParent) ?? section.querySelector(".status");
+  if (!target) return;
+  target.tabIndex = -1;
+  target.focus({ preventScroll: true });
 };
+/** Says text to screen readers once (#announce), without showing it. */
+function announce(text) {
+  const el = $("announce");
+  el.textContent = "";
+  // A separate change, so the same text twice is still announced.
+  requestAnimationFrame(() => { el.textContent = text; });
+}
 const setText = (id, t) => { $(id).textContent = t; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -259,6 +281,7 @@ function copyButton(btn, text, onFail) {
     }
     btn.classList.add("copied");
     btn.querySelector("span").textContent = "Copied";
+    announce("Copied");
     btn.querySelector("use").setAttribute("href", "#i-check");
     setTimeout(() => {
       btn.classList.remove("copied");
@@ -421,6 +444,8 @@ function stallWatch(side, total, onRetry) {
       VERSION, side, via || "?", region || "relay ?",
       `${bytes}/${total}`, `${s}s`, platform.isApp ? platform.os : "web",
     ].join(" · "));
+    // Said once when it appears; the seconds it shows tick silently.
+    if (note.hidden) announce("Nothing is getting through. The connection may be blocked or very slow. Reconnecting can help.");
     note.hidden = false;
   };
   return {
@@ -537,6 +562,7 @@ function askUser(text, label, action) {
   return new Promise((resolve) => {
     const btn = $("recv-pick-btn");
     btn.disabled = false;
+    btn.focus(); // (not a click: the picker still needs one)
     btn.onclick = async () => {
       btn.disabled = true;
       try {
@@ -635,10 +661,15 @@ async function receiverLoop(state) {
   for (let attempt = 0; !recvStopped; attempt++) {
     if (attempt) {
       const wait = Math.min(5, attempt);
+      // Said once; the status line counts down silently meanwhile.
+      announce("Connection lost. Trying again shortly. The sender needs to keep fileporter open.");
+      const status = $("recv-active-status");
+      status.setAttribute("aria-live", "off");
       for (let s = wait; s > 0 && !recvStopped; s--) {
         setText("recv-active-status", `Connection lost. Trying again in ${s} s. The sender needs to keep fileporter open.`);
         await sleep(1000);
       }
+      status.setAttribute("aria-live", "polite");
       if (recvStopped) return;
     }
     setText("recv-active-status", "Connecting…");
