@@ -251,26 +251,47 @@ public class FilesPlugin extends Plugin {
 
         /**
          * The file to read a range of (release() it after), or null if it
-         * can only be streamed. Opened on first use.
+         * can only be streamed. Opened on first use, outside the lock: a
+         * cloud provider may take seconds over it, and drop() (from the
+         * main thread, or the one plugin calls run on) mustn't wait for
+         * that. Ranges that miss it at the same time each open it; the
+         * first one in keeps its own and the others close theirs.
          */
-        synchronized FileDescriptor acquire(ContentResolver resolver, Uri uri) throws IOException {
-            if (pfd == null && !pipe) {
-                ParcelFileDescriptor p = resolver.openFileDescriptor(uri, "r");
-                if (p == null) {
-                    pipe = true;
-                } else {
-                    try {
-                        Os.lseek(p.getFileDescriptor(), 0, OsConstants.SEEK_CUR);
-                        pfd = p;
-                    } catch (ErrnoException e) {
-                        closeQuietly(p); // a pipe, not a file: stream it instead
-                        pipe = true;
-                    }
+        FileDescriptor acquire(ContentResolver resolver, Uri uri) throws IOException {
+            synchronized (this) {
+                if (pfd != null) {
+                    users++;
+                    return pfd.getFileDescriptor();
+                }
+                if (pipe) return null;
+                if (dropped) throw new IOException("let go of");
+            }
+            ParcelFileDescriptor p = resolver.openFileDescriptor(uri, "r");
+            boolean file = false;
+            if (p != null) {
+                try {
+                    Os.lseek(p.getFileDescriptor(), 0, OsConstants.SEEK_CUR);
+                    file = true;
+                } catch (ErrnoException e) {
+                    // a pipe, not a file: stream it instead
                 }
             }
-            if (pfd == null) return null;
-            users++;
-            return pfd.getFileDescriptor();
+            FileDescriptor fd = null;
+            synchronized (this) {
+                if (!file) {
+                    pipe = true;
+                } else if (pfd == null && !dropped) {
+                    pfd = p;
+                    p = null;
+                }
+                if (pfd != null) {
+                    users++;
+                    fd = pfd.getFileDescriptor();
+                }
+            }
+            closeQuietly(p); // a pipe, or another range got there first
+            if (fd == null && file) throw new IOException("let go of");
+            return fd;
         }
 
         void release() {
