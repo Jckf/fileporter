@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Jim C K Flaten
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Session state lives only in the URL fragment (never sent to any
-// server, never written to storage). Reopening the same URL resumes;
-// navigating away loses the session.
+// Session state lives in the URL fragment, which is never sent to any
+// server. In a browser it's stored nowhere else: reopening the same URL
+// resumes, navigating away loses the session. The Android and iOS apps
+// also keep the current fragment in their own localStorage (remember()),
+// to carry on where they were closed.
 //
-//   Sender:   #s.<b64url JSON>  {v, id, sk, rk, rp, a, m, f}
+//   Sender:   #s.<b64url JSON>  {v, id, sk, rk, rp, a, m, f, u?}
 //   Receiver: #R<b64url bytes>  compact binary, see below
 //             #r.<b64url JSON>  {v, id, a, k, sm, rm?}   (older links; still accepted)
 //
@@ -18,6 +20,8 @@
 //   m   sender's mode / sm: sender's mode as seen by receiver
 //   rm  receiver's mode, added once chosen
 //   f   file fingerprint {s: size, t: lastModified, nh: SHA-256(name) hex prefix}
+//   u   the app's handle on the picked file (nativefile.js), to send it
+//       again after a restart without asking   (sender, in the app only)
 //
 // The receiver link is the one people share (and scan as a QR code), so
 // it is packed:
