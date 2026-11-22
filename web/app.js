@@ -44,10 +44,25 @@ watchConnectivity();
 // A file shared to the app from another app starts a new send (and a
 // shared fileporter link opens).
 let shared = null;
+/**
+ * Whether to leave this page for something opened or shared to the app
+ * ("open the new link instead"): asked while a transfer can still be
+ * resumed, or while a received file waits to be saved (leaving forgets
+ * it, though nothing's guarded then).
+ */
+function mayLeave(instead) {
+  if (!$("recv-save").hidden) return confirm(`The received file isn't saved yet. Leave it and ${instead}?`);
+  if (isGuarding()) return confirm(`Stop this transfer and ${instead}?`);
+  return true;
+}
 if (platform.isApp) {
-  platform.onLinkOpened((hash) => { location.hash = hash; }); // hashchange reloads
+  platform.onLinkOpened((hash) => {
+    if (!mayLeave("open the new link instead")) return;
+    setGuard(false);
+    location.hash = hash; // hashchange reloads
+  });
   nativefile.onShared(() => {
-    if (isGuarding() && !confirm("Stop this transfer and send the shared file instead?")) {
+    if (!mayLeave("send the shared file instead")) {
       nativefile.takeShared(); // declined: don't pick it up later
       return;
     }
