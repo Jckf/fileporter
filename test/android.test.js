@@ -202,6 +202,33 @@ tests["share-link"] = async ({ shell, appPage }) => {
   return "link opened";
 };
 
+/**
+ * Receives the app's send (link) on the desktop. Once a quarter has
+ * arrived, disrupt(receiverPage) interrupts it ("what" names how) and
+ * returns the app's sender page; then the file must arrive intact and
+ * the sender finish.
+ */
+async function receiveAcross(desktop, link, buffer, what, disrupt) {
+  step("receiving on the desktop");
+  const r = await desktop.newPage();
+  try {
+    await r.goto(BASE + new URL(link).hash);
+    await r.locator("#recv-active").waitFor();
+    await waitUntil(async () => {
+      if (await r.locator("#recv-save").isVisible()) throw new Error(`finished before the ${what}; use a bigger file`);
+      return parseBytes(await r.textContent("#recv-progress-text")) >= buffer.length / 4;
+    }, 180_000, "receiver stuck");
+    step(`${what} mid-transfer`);
+    const sender = await disrupt(r);
+    await r.locator("#recv-save").waitFor({ timeout: 300_000 });
+    const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
+    if (sha(await readFile(await dl.path())) !== sha(buffer)) throw new Error("received file differs");
+    await sender.locator("#send-done").waitFor({ timeout: 60_000 });
+  } finally {
+    await r.close();
+  }
+}
+
 tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) => {
   const buffer = randomBytes(SIZE);
   const name = `upload-${Date.now()}.bin`;
@@ -220,32 +247,15 @@ tests["send-resume"] = async ({ desktop, device, shell, find, tap, appPage }) =>
   await page.click("#send-start");
   const link = await linkOf(page);
 
-  step("receiving on the desktop");
-  const r = await desktop.newPage();
-  try {
-    await r.goto(BASE + new URL(link).hash);
-    await r.locator("#recv-active").waitFor();
-    await waitUntil(async () => {
-      if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the restart; use a bigger file");
-      return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
-    }, 180_000, "receiver stuck");
-
-    step("restarting the app mid-transfer");
+  await receiveAcross(desktop, link, buffer, "app restart", async () => {
     await shell("am force-stop app.fileporter");
     await shell("am start -W -n app.fileporter/.MainActivity");
     page = await appPage();
     await page.locator("#send-active:visible, #send-resume:visible").first().waitFor({ timeout: 60_000 });
     if (await page.locator("#send-resume").isVisible()) throw new Error("asked for the file again");
-
-    await r.locator("#recv-save").waitFor({ timeout: 300_000 });
-    const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
-    const got = sha(await readFile(await dl.path()));
-    if (got !== sha(buffer)) throw new Error("received file differs");
-    await page.locator("#send-done").waitFor({ timeout: 60_000 });
-    return `${SIZE / MiB} MiB sent across an app restart, hash OK`;
-  } finally {
-    await r.close();
-  }
+    return page;
+  });
+  return `${SIZE / MiB} MiB sent across an app restart, hash OK`;
 };
 
 // A file the provider can only stream through a pipe, so the plugin
@@ -270,25 +280,10 @@ tests["send-pipe"] = async ({ desktop, device, shell, appPage }) => {
   await page.click("#send-start");
   const link = await linkOf(page);
 
-  step("receiving on the desktop");
-  const r = await desktop.newPage();
-  try {
-    await r.goto(BASE + new URL(link).hash);
-    await r.locator("#recv-active").waitFor();
-    await waitUntil(async () => {
-      if (await r.locator("#recv-save").isVisible()) throw new Error("finished before the reload; use a bigger file");
-      return parseBytes(await r.textContent("#recv-progress-text")) >= SIZE / 4;
-    }, 180_000, "receiver stuck");
-    step("reloading the receiver mid-transfer");
+  await receiveAcross(desktop, link, buffer, "receiver reload", async (r) => {
     await r.reload();
-    await r.locator("#recv-save").waitFor({ timeout: 300_000 });
-    const [dl] = await Promise.all([r.waitForEvent("download"), r.click("#recv-save-btn")]);
-    const got = sha(await readFile(await dl.path()));
-    if (got !== sha(buffer)) throw new Error("received file differs");
-    await page.locator("#send-done").waitFor({ timeout: 60_000 });
-  } finally {
-    await r.close();
-  }
+    return page;
+  });
   // Once to tell it's a pipe, whose stream then serves from the start,
   // and again after the reload sent the sender back: at least two, and a
   // few at most, not one for each of the file's 1 MiB ranges.
