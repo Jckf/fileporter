@@ -48,9 +48,11 @@ jobs:
         with:
           go-version-file: go.mod
       # The engine's own tests run as js/wasm, in the runner's Node, via
-      # the toolchain's go_js_wasm_exec.
+      # the toolchain's go_js_wasm_exec, with the build tags it ships with.
       - name: Test engine
-        run: PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test ./cmd/engine
+        run: |
+          tags=$(go run ./cmd/build -print-tags)
+          PATH="$(go env GOROOT)/lib/wasm:$PATH" GOOS=js GOARCH=wasm go test -tags "$tags" ./cmd/engine
       - name: Build site
         run: go run ./cmd/build -o dist
       # Built here, where Go is set up and cached, so the test jobs need

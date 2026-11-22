@@ -71,7 +71,12 @@ const wasmTags = "ts_omit_ace,ts_omit_acme,ts_omit_advertiseexitnode,ts_omit_adv
 
 func main() {
 	out := flag.String("o", "dist", "output directory")
+	printTags := flag.Bool("print-tags", false, "print the engine's build tags and exit (for testing it as built)")
 	flag.Parse()
+	if *printTags {
+		fmt.Println(wasmTags)
+		return
+	}
 	if err := run(*out); err != nil {
 		log.Fatal(err)
 	}
