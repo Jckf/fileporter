@@ -376,7 +376,7 @@ async function startSender(state, file) {
 function senderStartFailed(err, errorId) {
   if ($("send-active").hidden) { setText(errorId, err.message); return false; }
   setGuard(false);
-  setText("send-active-status", `Couldn't start sending: ${err.message}. Reopen fileporter to try again.`);
+  setText("send-active-status", `Couldn't start sending: ${errText(err)}. Reopen fileporter to try again.`);
   return true;
 }
 
@@ -450,7 +450,7 @@ $("send-start").onclick = async () => {
     await startSender(state, file);
   } catch (err) {
     if (!senderStartFailed(err, "send-error")) {
-      setText("send-error", `Couldn't create the link: ${err.message}`);
+      setText("send-error", `Couldn't create the link: ${errText(err)}.`);
       updateStartButton();
     }
   }
@@ -536,7 +536,7 @@ function askUser(text, label, action) {
           return;
         }
       } catch (err) {
-        setText("recv-active-status", `Something went wrong: ${err.message}. Try again.`);
+        setText("recv-active-status", `Something went wrong: ${errText(err)}. Try again.`);
       }
       btn.disabled = false;
     };
@@ -756,7 +756,7 @@ function showSave(state, meta) {
     try {
       await save();
     } catch (err) {
-      setText("recv-save-status", `Couldn't save the file: ${err.message}. Try again.`);
+      setText("recv-save-status", `Couldn't save the file: ${errText(err)}. Try again.`);
     } finally {
       btn.disabled = false;
     }
