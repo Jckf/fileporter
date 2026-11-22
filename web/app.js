@@ -478,11 +478,17 @@ $("send-resume-cancel").onclick = () => {
 
 async function senderResume(state) {
   if (state.m === "privacy") rtc.lockOutWebRTC();
+  let accepted = false;
   resumeWith = async (file) => {
+    // Once a file is accepted, sending starts (perhaps after the engine
+    // loads); picking again meanwhile mustn't start a second sender.
+    if (accepted) return true;
     if (!frag.sameFile(state.f, await frag.fileFingerprint(file))) {
       setText("send-resume-error", "That's not the same file. Choose the one you were sending.");
       return false;
     }
+    if (accepted) return true; // (a pick that finished while this one was checked)
+    accepted = true;
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     engine.ready.then(
       () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")),
