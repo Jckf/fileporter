@@ -47,8 +47,9 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // --- Leaving the page --------------------------------------------------------
 
-// While a transfer can still be resumed, warn before leaving: reloading
-// resumes, but navigating away loses the session.
+// While a transfer is under way, warn before leaving: reloading resumes,
+// but navigating away loses the session. (Not on the resume screen,
+// before anything runs.)
 let guardLeave = false;
 // The same span also keeps the screen awake: a phone locking itself
 // would suspend the page and drop the transfer.
