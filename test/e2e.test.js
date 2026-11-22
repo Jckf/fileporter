@@ -17,7 +17,7 @@
 
 import { chromium, firefox, webkit } from "playwright";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MiB, sleep, waitUntil, linkOf, parseBytes } from "./helpers.js";
@@ -785,6 +785,59 @@ async function fileOnDisk(p, size) {
   await writeFile(path, mem.buffer);
   p.cleanup.push(() => rm(dir, { recursive: true, force: true }));
   return { path, buffer: mem.buffer, hash };
+}
+
+// The connection drops after the receiver stored the whole file but
+// before the sender heard (?dropcomplete, config.js): the redial finds
+// the transfer complete and must only finish it.
+tests["complete-reconnect"] = async (p) => {
+  const { file, hash } = mkFile(3 * MiB + 5);
+  const link = await p.startSender(file, "privacy");
+  await p.openReceiver(withQuery(link, "dropcomplete"), "privacy");
+  if (sha(await p.download()) !== hash) throw new Error("hash mismatch after reconnecting complete");
+  if (!p.logs.some((l) => l.includes("test: dropped after complete"))) throw new Error("the drop after completing didn't happen");
+  await p.sender.locator("#send-done").waitFor({ timeout: 30_000 });
+};
+
+// As complete-reconnect, but while the receiver is away the sender's file
+// changes underneath (same name, size and modification time): in the
+// middle (so the final check fails) or at its end (so the sender starts
+// over). Either way the receiver keeps what it verified, says the
+// sender's file changed, and cancels, so the sender stops too.
+for (const where of ["middle", "end"]) {
+  tests[`complete-file-changed-${where}`] = async (p) => {
+    const size = 3 * MiB + 5;
+    const { path, buffer } = await fileOnDisk(p, size);
+    // A whole-second modification time, which survives being restored
+    // exactly (a stat()'s finer one can round differently).
+    const mtime = new Date(1_700_000_000_000);
+    await utimes(path, mtime, mtime);
+    const link = await p.startSender(path, "privacy");
+    const r = p.receiver;
+    const holding = r.waitForEvent("console", { predicate: (m) => m.text() === "test: holding after complete", timeout: 120_000 });
+    await p.openReceiver(withQuery(link, "dropcomplete=4000"), "privacy");
+    await holding;
+    // The sender goes away while the receiver holds on, its file changes…
+    const senderURL = p.sender.url();
+    await p.sender.goto("about:blank");
+    const changed = Buffer.from(buffer);
+    const at = where === "middle" ? MiB + 100 : size - 1;
+    changed[at] ^= 0xff;
+    await writeFile(path, changed);
+    await utimes(path, mtime, mtime);
+    // …and it comes back with that file, which still passes as the same
+    // one. (A fresh load, not goBack(): the back/forward cache could
+    // restore the old page instead.)
+    await p.sender.goto(senderURL, NAV);
+    await p.sender.locator("#send-resume").waitFor();
+    await p.sender.setInputFiles("#send-resume-file", path);
+    await p.sender.locator("#send-active:visible").waitFor({ timeout: 30_000 }).catch(async () => {
+      throw new Error(`sender didn't resume: ${await p.sender.textContent("#send-resume-error")}`);
+    });
+    await r.locator("#recv-active-status", { hasText: "file has changed" }).waitFor({ timeout: 120_000 });
+    await p.sender.locator("#cancelled", { hasText: "recipient cancelled" }).waitFor({ timeout: 30_000 });
+    if (!(await opfsList(r)).length) throw new Error("the received file wasn't kept");
+  };
 }
 
 tests["resume-sender-cancel"] = async (p) => {

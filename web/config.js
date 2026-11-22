@@ -26,4 +26,9 @@ export const config = {
   // Testing only: ?commit=<bytes> commits a picked file (see
   // storage-worker.js) this often instead of rarely.
   commitEvery: Number(params.get("commit")) || 0,
+  // Testing only: ?dropcomplete[=<ms>] drops the receiver's connection
+  // once, after it stored the whole file and before telling the sender
+  // (holding it that long first), so the redial finds it complete.
+  simDropAfterComplete: params.has("dropcomplete"),
+  simDropAfterCompleteMs: Number(params.get("dropcomplete")) || 0,
 };

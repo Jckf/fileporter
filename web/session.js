@@ -34,6 +34,7 @@
 // A dropped connection at any point is resumable: the receiver redials
 // and the handshake picks up at the first chunk it doesn't have.
 
+import { config } from "./config.js";
 import { Link, RtcTransport } from "./transport.js";
 import * as rtc from "./rtc.js";
 import * as storage from "./storage.js";
@@ -67,6 +68,8 @@ const READER_GRACE_MS = 100;
 // relay it may sit behind up to a window of chunks (8 MiB), a few
 // seconds at slow relay speeds.
 const CANCEL_DRAIN_MS = 15_000;
+
+let droppedAfterComplete = false; // ?dropcomplete (config.js), once
 
 export const chunkCount = (size) => Math.ceil(size / CHUNK);
 const chunkLenFor = (size) => (idx) => Math.min(CHUNK, size - idx * CHUNK);
@@ -440,6 +443,12 @@ export async function receiverSession(conn, { state, target, canMakeRoom, iceSer
     // Mark complete before telling the sender, so a crash in between
     // can't leave us without the file while the sender thinks it's done.
     await storage.complete(state.id);
+    if (config.simDropAfterComplete && !droppedAfterComplete) {
+      droppedAfterComplete = true;
+      console.debug("test: holding after complete");
+      await new Promise((r) => setTimeout(r, config.simDropAfterCompleteMs));
+      throw new Error("test: dropped after complete");
+    }
     await transport.send({ t: "complete", ok, root });
     await end();
     return { hello, via };
