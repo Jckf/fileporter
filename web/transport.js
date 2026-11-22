@@ -56,7 +56,12 @@ class EventQueue {
       if (Date.now() - this.lastRx > PEER_TIMEOUT_MS) this.timedOut();
     }, 1000));
   }
-  timedOut() { this.close(new Error("peer timed out")); }
+  timedOut() {
+    this.close(new Error("peer timed out"));
+    this.shutdown();
+  }
+  /** Tears down at once; subclasses also close what they run over. */
+  shutdown() { this.close(); }
   push(item) {
     this.lastRx = Date.now();
     if (item.kind === "control" && item.msg.t === "ping") return;
@@ -100,10 +105,6 @@ export class Link extends EventQueue {
     this.fc.onBytes = () => { this.lastRx = Date.now(); };
     this.done = this.readLoop();
     this.startLiveness(() => this.fc.send({ t: "ping" }).catch(() => {}));
-  }
-  timedOut() {
-    super.timedOut();
-    this.fc.close();
   }
   async readLoop() {
     try {
@@ -174,6 +175,9 @@ export class RtcTransport extends EventQueue {
     this.via = "rtc";
     this.chunkLen = chunkLen;
     this.lanes = [];
+    // Senders waiting in drained(): woken when a lane drains, a lane is
+    // added (it starts out empty) or the transport closes.
+    this.drainWaiters = new Set();
     this.addLane(pc, dc);
     this.startLiveness(() => { try { this.dc.send('{"t":"ping"}'); } catch {} });
   }
@@ -194,10 +198,15 @@ export class RtcTransport extends EventQueue {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") this.close(new Error("direct connection lost"));
     });
     dc.takeOver((d) => this.onData(lane, d));
+    this.wakeDrainWaiters();
   }
-  timedOut() {
-    super.timedOut();
-    this.shutdown();
+  close(err) {
+    if (this.err) return;
+    super.close(err);
+    this.wakeDrainWaiters();
+  }
+  wakeDrainWaiters() {
+    for (const wake of [...this.drainWaiters]) wake();
   }
   onData(lane, d) {
     this.lastRx = Date.now();
@@ -207,9 +216,14 @@ export class RtcTransport extends EventQueue {
       const idx = dv.getUint32(0);
       const off = dv.getUint32(4);
       const payload = new Uint8Array(d, 8);
-      if (!lane.asm || lane.asm.idx !== idx) {
+      if (!lane.asm) {
         if (off !== 0) throw new Error(`chunk ${idx} started at offset ${off}`);
         lane.asm = { idx, buf: new Uint8Array(this.chunkLen(idx)), got: 0 };
+      } else if (lane.asm.idx !== idx) {
+        // A lane carries one whole chunk at a time: anything else would
+        // lose the rest of the first one, and the transfer would wait
+        // for it forever instead of failing and resuming.
+        throw new Error(`chunk ${lane.asm.idx} cut short by chunk ${idx}`);
       }
       const asm = lane.asm;
       if (off !== asm.got || off + payload.length > asm.buf.length) throw new Error(`chunk ${idx}: bad piece at ${off}`);
@@ -254,21 +268,26 @@ export class RtcTransport extends EventQueue {
       lane.dc.send(m.buffer);
     }
   }
-  /** Resolves when any lane's queue drops below LOW_WATER. */
+  /**
+   * Resolves when any lane's queue drops below LOW_WATER, a lane joins,
+   * or the transport closes (the caller checks this.err). Doesn't rely
+   * on the data channels' close events: pc.close() may skip them.
+   */
   drained() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const lanes = [...this.lanes];
-      const done = () => { cleanup(); resolve(); };
-      const fail = () => { cleanup(); reject(this.err || new Error("direct connection closed")); };
-      const cleanup = () => {
+      const wake = () => {
+        this.drainWaiters.delete(wake);
         for (const { dc } of lanes) {
-          dc.removeEventListener("bufferedamountlow", done);
-          dc.removeEventListener("close", fail);
+          dc.removeEventListener("bufferedamountlow", wake);
+          dc.removeEventListener("close", wake);
         }
+        resolve();
       };
+      this.drainWaiters.add(wake);
       for (const { dc } of lanes) {
-        dc.addEventListener("bufferedamountlow", done);
-        dc.addEventListener("close", fail);
+        dc.addEventListener("bufferedamountlow", wake);
+        dc.addEventListener("close", wake);
       }
     });
   }
