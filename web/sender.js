@@ -177,6 +177,10 @@ export function initSendPage(file) {
       await startSender(state, file);
     } catch (err) {
       senderStartFailed(err, () => {
+        // Nothing was sent: forget the session, so a reload starts over
+        // instead of resuming one that was given up.
+        frag.scrub();
+        nativefile.retain(null);
         setText("send-error", `Couldn't create the link: ${errText(err)}.`);
         updateStartButton();
       });
@@ -343,7 +347,10 @@ export async function senderResume(state) {
     accepted = true;
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     engine.ready.then(
-      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, () => setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`))),
+      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, () => {
+        accepted = false; // so choosing the file again tries again
+        setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`);
+      })),
       () => setText("send-resume-error", engineFailedText()),
     );
     return true;
