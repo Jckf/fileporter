@@ -25,6 +25,10 @@ import {
 let listener = null;
 let currentCtl = null;
 let delivered = false;
+// Set by Cancel, which shows while sending is still starting: startSender
+// checks it after each wait, so a listener that comes up afterwards is
+// closed instead of shared.
+let sendCancelled = false;
 
 // Leaving (or reloading): tell the peer, so it can reconnect right away
 // instead of waiting for the keepalive timeout. Best effort, see bye()
@@ -197,6 +201,7 @@ async function startSender(state, file) {
 
   const hashes = new ChunkHashes(file);
   const iceServers = state.m === "performance" ? await rtc.stunServers(config.derpMapURL) : [];
+  if (sendCancelled) return;
   listener = await engine.listen(
     { derpMapURL: config.derpMapURL, senderKey: state.sk, allowClient: state.rp, verbose: config.verbose },
     async (conn) => {
@@ -252,6 +257,7 @@ async function startSender(state, file) {
       }
     },
   );
+  if (sendCancelled) { listener.close(); return; }
   setupShare(frag.shareLink(state));
   setText("send-active-status", "Waiting for the recipient to open the link…");
 }
@@ -309,6 +315,7 @@ $("send-start").onclick = async () => {
 
 $("send-cancel").onclick = async () => {
   $("send-cancel").disabled = true;
+  sendCancelled = true;
   await currentCtl?.cancel?.();
   endSend();
   showCancelled("You cancelled the transfer.");
