@@ -345,11 +345,14 @@ export async function senderResume(state) {
     const file = $("send-resume-file").files[0];
     if (file) resumeWith(file);
   };
+  // Shown first, even when the app still has the file: until sending
+  // takes over (after the engine loads), it's where "Getting ready…" and
+  // any failure appear.
+  setText("send-resume-error", "");
+  setText("send-resume-mode", modeName(state.m));
+  show("send-resume");
   // The app still has the file: carry on without asking for it.
   const kept = state.u && nativefile.available() ? await nativefile.open(state.u) : null;
-  if (kept && (await resumeWith(kept))) return;
-  setText("send-resume-error", "");
-  show("send-resume");
-  setText("send-resume-mode", modeName(state.m));
+  if (kept) await resumeWith(kept);
 }
 
