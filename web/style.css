@@ -338,7 +338,9 @@ details.explain p { margin: 8px 0 0; }
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--fg);
   text-overflow: ellipsis;
 }
-#copy-link.copied, #unsupported-copy.copied { background: var(--ok); }
+
+/* copyButton (shell.js); also while hovered, over .primary:hover. */
+.copied, button.copied:hover:not(:disabled) { background: var(--ok); }
 .link-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 #qr-panel { margin-top: 14px; text-align: center; }
 .qr { display: inline-block; background: #fff; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); line-height: 0; }
