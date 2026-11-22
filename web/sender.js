@@ -349,7 +349,10 @@ export async function senderResume(state) {
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
     engine.ready.then(
       () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, () => {
-        accepted = false; // so choosing the file again tries again
+        // So choosing the file again tries again: in a browser the input
+        // must be cleared too, or picking the same file fires no change.
+        accepted = false;
+        $("send-resume-file").value = "";
         setText("send-resume-error", `Couldn't carry on sending: ${errText(err)}.`);
       })),
       () => setText("send-resume-error", engineFailedText()),
