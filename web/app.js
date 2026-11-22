@@ -62,6 +62,7 @@ window.addEventListener("hashchange", () => location.reload());
 // --- Engine status -----------------------------------------------------------
 
 let engineReady = false;
+let engineError = null;
 const readyCallbacks = new Set();
 engine.onProgress((s) => {
   const bar = $("engine-progress");
@@ -86,15 +87,19 @@ engine.onProgress((s) => {
       break;
     case "error":
       status.dataset.state = "error";
-      console.warn("engine failed to load:", s.error);
-      label.textContent = "Couldn't get ready. Check your connection, then reopen fileporter.";
+      engineError = s.error;
+      console.warn("engine failed:", s.error);
+      label.textContent = ENGINE_FAILED;
       break;
   }
 });
+const ENGINE_FAILED = "Couldn't get ready. Check your connection, then reopen fileporter.";
 const whenReady = (fn) => (engineReady ? fn() : readyCallbacks.add(fn));
 
 // --- Shared helpers ----------------------------------------------------------
 
+/** err's message for the middle of a sentence: no final period. */
+const errText = (err) => String(err?.message || err).replace(/[.\s]+$/, "");
 const pickedMode = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? null;
 const modeName = (m) => (m === "privacy" ? "Private" : "Fast");
 
@@ -479,7 +484,10 @@ async function senderResume(state) {
       return false;
     }
     setText("send-resume-error", engineReady ? "" : "Getting ready…");
-    whenReady(() => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")));
+    engine.ready.then(
+      () => resumeWith && startSender(state, file).catch((err) => senderStartFailed(err, "send-resume-error")),
+      () => setText("send-resume-error", ENGINE_FAILED),
+    );
     return true;
   };
   $("send-resume-file").onchange = () => {
@@ -700,6 +708,19 @@ async function receiverLoop(state) {
   }
 }
 
+/**
+ * receiverLoop failed outright (not a session: those it handles), e.g.
+ * the engine couldn't load or storage failed: say so and offer a retry
+ * rather than leave "Getting ready…" up for good.
+ */
+function receiverFailed(err) {
+  console.warn("receiving failed:", err);
+  recvCtl = null;
+  setGuard(false);
+  setText("recv-active-status", engineError ? ENGINE_FAILED : `Something went wrong: ${errText(err)}. Reload to try again.`);
+  $("recv-retry").hidden = false;
+}
+
 $("recv-retry").onclick = () => location.reload();
 $("busy-retry").onclick = () => location.reload();
 
@@ -840,7 +861,7 @@ async function receiver(state) {
   if (state.rm) {
     // Mode already chosen in this session (reopened URL): resume
     // without asking again.
-    receiverLoop(state);
+    receiverLoop(state).catch(receiverFailed);
     return;
   }
   show("recv-choose");
@@ -852,7 +873,7 @@ async function receiver(state) {
     if (!rm) return;
     state = { ...state, rm };
     frag.set("r", state);
-    receiverLoop(state);
+    receiverLoop(state).catch(receiverFailed);
   };
 }
 
