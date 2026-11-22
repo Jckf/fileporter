@@ -19,12 +19,21 @@ export const available = () => !!navigator.mediaDevices?.getUserMedia;
 const INTERVAL_MS = 150;
 const MAX_SIDE = 720;
 
+let scanning = null; // the scan under way, if any
+
 /**
  * Shows the camera (#scanner) until it sees a fileporter link's QR code.
  * Resolves to the link's fragment ("#R…"), or null if the user closed
- * it. Rejects if the camera can't be used.
+ * it. Rejects if the camera can't be used. A call while a scan is
+ * already starting or showing gets that scan: two would fight over the
+ * overlay, and the first one's camera would never be stopped.
  */
-export async function scanLink() {
+export function scanLink() {
+  scanning ??= scan().finally(() => { scanning = null; });
+  return scanning;
+}
+
+async function scan() {
   const { default: jsQR } = await import("./vendor/jsqr.mjs");
   let stream;
   try {
