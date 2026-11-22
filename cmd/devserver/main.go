@@ -20,16 +20,27 @@ import (
 )
 
 func main() {
-	// As GitHub Pages serves it; Go doesn't know the extension.
-	if err := mime.AddExtensionType(".webmanifest", "application/manifest+json"); err != nil {
+	if err := addTypes(); err != nil {
 		log.Fatal(err)
 	}
 	addr := flag.String("addr", "localhost:8080", "listen address")
 	dir := flag.String("dir", "dist", "directory to serve")
 	flag.Parse()
 
-	fs := http.FileServer(http.Dir(*dir))
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	log.Printf("serving %s on http://%s/", *dir, *addr)
+	log.Fatal(http.ListenAndServe(*addr, handler(*dir)))
+}
+
+// addTypes registers the MIME types Go doesn't know.
+func addTypes() error {
+	// As GitHub Pages serves it.
+	return mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
+
+// handler serves dir with the caching and security headers.
+func handler(dir string) http.Handler {
+	fs := http.FileServer(http.Dir(dir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		if strings.HasPrefix(r.URL.Path, "/v/") {
 			hd.Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -60,6 +71,4 @@ func main() {
 		}, "; "))
 		fs.ServeHTTP(w, r)
 	})
-	log.Printf("serving %s on http://%s/", *dir, *addr)
-	log.Fatal(http.ListenAndServe(*addr, h))
 }
