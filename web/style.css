@@ -363,7 +363,12 @@ details.explain p { margin: 8px 0 0; }
 }
 .stall p { margin: 0 0 10px; }
 .stall p.muted { margin: 10px 0 0; color: var(--muted); }
-.stall code { font-size: 0.8rem; overflow-wrap: anywhere; user-select: all; }
+
+/* On its own line in a box, so a wrapped code still reads as one thing to copy. */
+.stall code {
+  display: block; margin-top: 6px; padding: 6px 8px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); font-size: 0.8rem; overflow-wrap: anywhere; user-select: all;
+}
 
 /* Asking where to save a file too big for the browser's storage. */
 .pick { margin: 12px 0; padding: 14px; border-radius: var(--radius-sm); background: var(--accent-soft); }
